@@ -22,9 +22,10 @@ const CpuAI = (() => {
     const after  = distToOcc(state, tr, tc);
     score += (before - after) * 3;
 
-    // Bonus for standing on occupation squares
+    // Bonus for standing on occupation squares (layer-aware for B points)
     if (CONFIG.OCC_A.some(a => tr === a.r && tc === a.c)) score += 20;
-    if (state.occB.some(bp => bCells(bp).some(b => tr === b.r && tc === b.c))) score += 12;
+    if (state.occB.some(bp => bCells(bp).some(b =>
+      tr === b.r && tc === b.c && b.layer === fromLayer))) score += 12;
 
     // Avoid cells adjacent to many enemy pieces (threat)
     for (const [dr, dc] of [[0,1],[0,-1],[1,0],[-1,0]]) {
@@ -64,9 +65,18 @@ const CpuAI = (() => {
       // Emerging to surface: good if close to occupation target
       score += Math.max(0, 4 - distToOcc(state, r, c));
     } else {
-      // Submerging to depth: good if close to a DCP
+      // Submerging to depth: DCP proximity bonus
       const dcpDist = Math.min(...CONFIG.DCP.map(d => Math.abs(r-d.r)+Math.abs(c-d.c)));
       if (dcpDist <= 2) score += 5;
+      // B2 (depth B point) proximity bonus
+      const depthBcells = state.occB
+        .filter(bp => (bp.layer ?? 'surface') === 'depth')
+        .flatMap(bp => bCells(bp));
+      if (depthBcells.length > 0) {
+        const b2Dist = Math.min(...depthBcells.map(b => Math.abs(r-b.r) + Math.abs(c-b.c)));
+        if (b2Dist <= 3) score += 6;
+        if (b2Dist === 0) score += 12;
+      }
     }
     return score;
   }

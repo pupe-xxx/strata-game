@@ -178,11 +178,35 @@ function bindEvents() {
   document.getElementById('btn-skill')   .addEventListener('click', () => setActionMode('SKILL'));
   document.getElementById('btn-pass-action').addEventListener('click', queuePass);
 
-  // Layer transit (auto-queue, no cell click needed)
+  // Layer transit
   document.getElementById('btn-transit').addEventListener('click', () => {
     if (!G.selected) return;
     if (G.playerActions.length >= 2) { setMessage('すでに2アクション設定済みです'); return; }
     const { layer, r, c } = G.selected;
+
+    // α DCP FREE_EMERGE: depth→surface with arbitrary destination
+    if (layer === 'depth' && hasDCP(G, 'p1', 'FREE_EMERGE')) {
+      // Switch view to surface so player can see destination highlights
+      G.viewLayer = 'surface';
+      document.getElementById('btn-surface').classList.add('active');
+      document.getElementById('btn-depth').classList.remove('active');
+      // Keep selection and enter TRANSIT targeting mode
+      G.selected = { layer: 'depth', r, c };
+      G.actionMode = 'TRANSIT';
+      G.validCells = [];
+      for (let tr = 0; tr < CONFIG.BOARD_SIZE; tr++) {
+        for (let tc = 0; tc < CONFIG.BOARD_SIZE; tc++) {
+          if (!G.surface[tr][tc].piece)
+            G.validCells.push({ r: tr, c: tc, layer: 'surface' });
+        }
+      }
+      document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+      setActBtn('btn-transit', { active: true });
+      setMessage(`α DCP 任意浮上 — 表層の移動先をクリック (${G.validCells.length}箇所)`);
+      return;
+    }
+
+    // Normal transit (same grid coordinate)
     const dest = getTransitDest(G, layer, r, c);
     if (!dest) { setMessage('層移動できません'); return; }
     const piece = getPieceAt(G, layer, r, c);
@@ -346,6 +370,17 @@ function handleCanvasInteraction(px, py) {
     return;
   }
 
+  // α DCP FREE_EMERGE TRANSIT: layer-independent surface targeting
+  if (G.selected && G.actionMode === 'TRANSIT') {
+    const isValid = G.validCells.some(v => v.r === r && v.c === c);
+    if (isValid) {
+      queueAction(r, c, 'surface');
+      return;
+    }
+    // Click elsewhere: stay in targeting mode
+    return;
+  }
+
   // If we're in a targeting mode, treat click as target selection
   if (G.selected && G.actionMode && G.actionMode !== null) {
     const isValid = G.validCells.some(v => v.r === r && v.c === c && v.layer === layer);
@@ -491,8 +526,9 @@ function selectPiece(layer, r, c) {
   setActBtn('btn-attack',  { disabled: def.atkRange === 0 || piece.reviving });
   setActBtn('btn-terrain', { disabled: def.terrainRange === 0 || piece.reviving });
 
-  const canTransit = !!getTransitDest(G, layer, r, c);
-  setActBtn('btn-transit', { disabled: !canTransit });
+  const canNormalTransit = !!getTransitDest(G, layer, r, c);
+  const canFreeEmerge   = layer === 'depth' && hasDCP(G, 'p1', 'FREE_EMERGE');
+  setActBtn('btn-transit', { disabled: !canNormalTransit && !canFreeEmerge });
 
   const skillName = getSkillName(piece.type);
   setActBtn('btn-skill', { disabled: !skillName || piece.reviving, text: skillName || 'スキル' });
@@ -829,16 +865,24 @@ function updateUI() {
     if (!bar) return;
     bar.style.width = `${Math.min(100, (value / max) * 100)}%`;
   }
-  setBar('occ-A-p1-bar',  G.occAB.p1, CONFIG.WIN_AB);
-  setBar('occ-A-p2-bar',  G.occAB.p2, CONFIG.WIN_AB);
-  setBar('occ-B0-p1-bar', G.occAB.p1, CONFIG.WIN_AB);
-  setBar('occ-B0-p2-bar', G.occAB.p2, CONFIG.WIN_AB);
-  setBar('occ-B1-p1-bar', G.occA.p1,  CONFIG.WIN_A);
-  setBar('occ-B1-p2-bar', G.occA.p2,  CONFIG.WIN_A);
+  // A行: A+B同時保持のターン数進捗
+  setBar('occ-A-p1-bar', G.occAB.p1, CONFIG.WIN_AB);
+  setBar('occ-A-p2-bar', G.occAB.p2, CONFIG.WIN_AB);
+  document.getElementById('occ-A-count').textContent = `${G.occAB.p1}/${G.occAB.p2}`;
 
-  document.getElementById('occ-A-count') .textContent = `${G.occAB.p1}/${G.occAB.p2}`;
-  document.getElementById('occ-B0-count').textContent = `${G.occAB.p1}/${G.occAB.p2}`;
-  document.getElementById('occ-B1-count').textContent = `${G.occA.p1}/${G.occA.p2}`;
+  // B1行: B1ポイントの現在の支配者（バイナリ表示）
+  const b0ctrl = G.occMeta?.B0;
+  setBar('occ-B0-p1-bar', b0ctrl === 'p1' ? 1 : 0, 1);
+  setBar('occ-B0-p2-bar', b0ctrl === 'p2' ? 1 : 0, 1);
+  document.getElementById('occ-B0-count').textContent =
+    b0ctrl === 'p1' ? 'あなた' : b0ctrl === 'p2' ? 'CPU' : '—';
+
+  // B2行: B2ポイント（深層）の現在の支配者
+  const b1ctrl = G.occMeta?.B1;
+  setBar('occ-B1-p1-bar', b1ctrl === 'p1' ? 1 : 0, 1);
+  setBar('occ-B1-p2-bar', b1ctrl === 'p2' ? 1 : 0, 1);
+  document.getElementById('occ-B1-count').textContent =
+    b1ctrl === 'p1' ? 'あなた' : b1ctrl === 'p2' ? 'CPU' : '—';
   document.getElementById('b-move-timer').textContent = `B移動: ${G.bMoveIn}T後`;
 
   // DCP control status
