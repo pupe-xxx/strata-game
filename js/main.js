@@ -83,6 +83,29 @@ function getSkillName(pieceType) {
   return { WARDEN:'押し出し', RANGER:'狙撃', STRIKER:'位置交換', ENGINEER:'修繕' }[pieceType] || null;
 }
 
+function isMobile() { return window.innerWidth <= 700; }
+
+// ── Tab / panel switching ──────────────────────────────────────────
+function switchInfoTab(tabName) {
+  document.querySelectorAll('.info-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === tabName));
+  document.getElementById('tab-you-panel').style.display      = tabName === 'you'      ? '' : 'none';
+  const cpuPanel = document.getElementById('tab-cpu-panel');
+  if (cpuPanel) cpuPanel.style.display                        = tabName === 'cpu'      ? '' : 'none';
+  document.getElementById('tab-selected-panel').style.display = tabName === 'selected' ? '' : 'none';
+}
+
+// Sync action button state to both desktop (#btn-X) and mobile (#mob-btn-X)
+function setActBtn(id, opts) {
+  [id, 'mob-' + id].forEach(bid => {
+    const el = document.getElementById(bid);
+    if (!el) return;
+    if (opts.disabled !== undefined) el.disabled = opts.disabled;
+    if (opts.active   !== undefined) el.classList.toggle('active', opts.active);
+    if (opts.text     !== undefined) el.textContent = opts.text;
+  });
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 function initGame() {
   G = createInitialState();
@@ -163,9 +186,8 @@ function bindEvents() {
     document.getElementById('btn-confirm').disabled = false;
     G.selected = null; G.actionMode = null; G.validCells = []; G.attackCells = [];
     document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('selected-info').textContent = '— 駒を選択 —';
-    document.getElementById('btn-transit').disabled = true;
-    document.getElementById('btn-skill').disabled = true;
+    setActBtn('btn-transit', { disabled: true });
+    setActBtn('btn-skill',   { disabled: true });
     clearInfoPanel();
     const remaining = 2 - G.playerActions.length;
     setMessage(remaining > 0
@@ -197,8 +219,52 @@ function bindEvents() {
   document.getElementById('btn-confirm') .addEventListener('click', confirmTurn);
   document.getElementById('btn-deselect').addEventListener('click', deselect);
 
-  // Mobile: close info panel bottom sheet
-  document.getElementById('btn-close-info')?.addEventListener('click', deselect);
+  // Mobile: info tab buttons
+  document.querySelectorAll('.info-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchInfoTab(btn.dataset.tab));
+  });
+
+  // Mobile: action buttons (mirror desktop)
+  document.getElementById('mob-btn-move')   ?.addEventListener('click', () => setActionMode('MOVE'));
+  document.getElementById('mob-btn-attack') ?.addEventListener('click', () => setActionMode('ATTACK'));
+  document.getElementById('mob-btn-terrain')?.addEventListener('click', () => {
+    if (G.terrainDir === null) {
+      document.getElementById('mob-terrain-menu').style.display = 'flex';
+    } else {
+      setActionMode('TERRAIN');
+    }
+  });
+  document.getElementById('mob-btn-transit')?.addEventListener('click', () =>
+    document.getElementById('btn-transit').click());
+  document.getElementById('mob-btn-skill')  ?.addEventListener('click', () => setActionMode('SKILL'));
+  document.getElementById('mob-btn-pass')   ?.addEventListener('click', queuePass);
+
+  // Mobile terrain submenu
+  document.querySelectorAll('.terrain-opt[data-mob-dir]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      G.terrainDir = btn.dataset.mobDir;
+      document.getElementById('mob-terrain-menu').style.display = 'none';
+      setActionMode('TERRAIN');
+    });
+  });
+  document.getElementById('mob-btn-terrain-cancel')?.addEventListener('click', () => {
+    document.getElementById('mob-terrain-menu').style.display = 'none';
+    G.actionMode = null;
+    G.terrainDir = null;
+    G.validCells = [];
+  });
+
+  // Mobile: log popup
+  document.getElementById('btn-log-popup')?.addEventListener('click', () => {
+    document.getElementById('log-popup').style.display = 'flex';
+  });
+  document.getElementById('btn-close-log')?.addEventListener('click', () => {
+    document.getElementById('log-popup').style.display = 'none';
+  });
+  document.getElementById('log-popup')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('log-popup'))
+      document.getElementById('log-popup').style.display = 'none';
+  });
 
   // Restart
   document.getElementById('btn-restart').addEventListener('click', restartGame);
@@ -257,7 +323,6 @@ function handleCanvasInteraction(px, py) {
       document.getElementById('btn-confirm').disabled = false;
       selectedHandPiece = null;
       G.actionMode = null; G.validCells = [];
-      document.getElementById('selected-info').textContent = '駒を選択中…';
       const remaining = 2 - G.playerActions.length;
       setMessage(remaining > 0
         ? `アクション設定済み (残り${remaining}個まで設定可能)`
@@ -383,25 +448,18 @@ function updateInfoPanel(piece, def, layer) {
   document.getElementById('info-terrain').textContent = info.terrain;
   document.getElementById('info-skill').textContent   = info.skill;
   document.getElementById('info-trait').textContent   = info.trait;
-
-  // Operatoin guide based on state
-  let guide = '';
-  if (!piece.reviving) {
-    if (piece.trapped) {
-      guide = '緑マス: 脱出先\n移動アクションで穴から抜け出せます';
-    } else {
-      guide = '緑マス: 移動先\n赤マス: 攻撃可能な敵\n\nクリックで直接アクション\n地形変形はボタンから選択';
-    }
-  } else {
-    guide = '復活待機中のため行動不可';
-  }
-  document.getElementById('info-guide').textContent = guide;
 }
 
 function clearInfoPanel() {
   document.getElementById('info-empty').style.display   = 'block';
   document.getElementById('info-content').style.display = 'none';
   document.body.classList.remove('piece-selected');
+  if (isMobile()) {
+    switchInfoTab('you');
+  } else {
+    document.getElementById('tab-selected-panel').style.display = 'none';
+    document.getElementById('tab-you-panel').style.display      = '';
+  }
 }
 
 // ── Piece selection ───────────────────────────────────────────────
@@ -413,27 +471,16 @@ function selectPiece(layer, r, c) {
   const def   = CONFIG.PIECES[piece.type];
   const lbl   = CONFIG.PIECE_LABEL[piece.type];
 
-  document.getElementById('selected-info').textContent =
-    `${CONFIG.PIECE_EMOJI[piece.type]} ${lbl}  HP:${piece.hp}/${piece.maxHp}`;
+  // Enable/disable action buttons (synced to both desktop and mobile)
+  setActBtn('btn-move',    { disabled: piece.reviving });
+  setActBtn('btn-attack',  { disabled: def.atkRange === 0 || piece.reviving });
+  setActBtn('btn-terrain', { disabled: def.terrainRange === 0 || piece.reviving });
 
-  // Enable/disable action buttons
-  const btnMove    = document.getElementById('btn-move');
-  const btnAttack  = document.getElementById('btn-attack');
-  const btnTerrain = document.getElementById('btn-terrain');
-
-  btnMove   .disabled = piece.reviving;
-  btnAttack .disabled = def.atkRange === 0 || piece.reviving;
-  btnTerrain.disabled = def.terrainRange === 0 || piece.reviving;
-
-  // Transit button
   const canTransit = !!getTransitDest(G, layer, r, c);
-  document.getElementById('btn-transit').disabled = !canTransit;
+  setActBtn('btn-transit', { disabled: !canTransit });
 
-  // Skill button
   const skillName = getSkillName(piece.type);
-  const btnSkill = document.getElementById('btn-skill');
-  btnSkill.disabled = !skillName || piece.reviving;
-  btnSkill.textContent = skillName || 'スキル';
+  setActBtn('btn-skill', { disabled: !skillName || piece.reviving, text: skillName || 'スキル' });
 
   // ── Auto-enter MOVE mode (show move + attack highlights simultaneously) ──
   G.actionMode = 'MOVE';
@@ -454,9 +501,15 @@ function selectPiece(layer, r, c) {
   document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
   btnMove.classList.add('active');
 
-  // Update info panel
+  // Update info panel and switch to 選択中 tab
   updateInfoPanel(piece, def, layer);
-  document.body.classList.add('piece-selected');   // mobile bottom sheet
+  document.body.classList.add('piece-selected');
+  if (isMobile()) {
+    switchInfoTab('selected');
+  } else {
+    document.getElementById('tab-you-panel').style.display      = 'none';
+    document.getElementById('tab-selected-panel').style.display = '';
+  }
 }
 
 function selectHandPiece(piece) {
@@ -475,8 +528,7 @@ function selectHandPiece(piece) {
       if (!G.surface[r][c].piece) G.validCells.push({ r, c, layer: 'surface' });
     }
   }
-  document.getElementById('selected-info').textContent =
-    `手駒: ${CONFIG.PIECE_LABEL[piece.type]} — 配置先を選択`;
+  // hand piece deployment selected
   setMessage(`${CONFIG.PIECE_LABEL[piece.type]} の配置先を選んでください (${G.validCells.length}箇所)`);
 }
 
@@ -488,17 +540,13 @@ function deselect() {
   G.terrainDir  = null;
   selectedHandPiece = null;
   currentSkillMode  = null;
-  document.getElementById('selected-info').textContent = '— 駒を選択 —';
-  document.getElementById('btn-move')   .disabled = true;
-  document.getElementById('btn-attack') .disabled = true;
-  document.getElementById('btn-terrain').disabled = true;
-  document.getElementById('btn-transit').disabled = true;
-  const btnSkill = document.getElementById('btn-skill');
-  btnSkill.disabled = true;
-  btnSkill.textContent = 'スキル';
-  document.getElementById('btn-move').textContent = '移動';
-  document.getElementById('terrain-menu').style.display = 'none';
-  document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+  setActBtn('btn-move',    { disabled: true, active: false, text: '移動' });
+  setActBtn('btn-attack',  { disabled: true, active: false });
+  setActBtn('btn-terrain', { disabled: true, active: false });
+  setActBtn('btn-transit', { disabled: true, active: false });
+  setActBtn('btn-skill',   { disabled: true, active: false, text: 'スキル' });
+  document.getElementById('terrain-menu').style.display     = 'none';
+  document.getElementById('mob-terrain-menu').style.display = 'none';
   clearInfoPanel();
   setMessage('駒をクリックして選択してください');
 }
@@ -542,7 +590,7 @@ function setActionMode(mode) {
         : '隣接に回復できる味方がいません');
     }
     document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('btn-skill').classList.add('active');
+    setActBtn('btn-skill', { active: true });
     return;
   }
 
@@ -567,10 +615,8 @@ function setActionMode(mode) {
 
   // Highlight action mode buttons
   document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
-  const btn = document.getElementById(
-    mode === 'MOVE' ? 'btn-move' : mode === 'ATTACK' ? 'btn-attack' : 'btn-terrain'
-  );
-  if (btn) btn.classList.add('active');
+  const activeId = mode === 'MOVE' ? 'btn-move' : mode === 'ATTACK' ? 'btn-attack' : 'btn-terrain';
+  setActBtn(activeId, { active: true });
 }
 
 // ── Queue action ──────────────────────────────────────────────────
@@ -612,8 +658,8 @@ function queueAction(tr, tc, tLayer) {
   G.attackCells = [];
   G.terrainDir  = null;
   document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('selected-info').textContent = '— 駒を選択 —';
-  document.getElementById('terrain-menu').style.display = 'none';
+  document.getElementById('terrain-menu').style.display     = 'none';
+  document.getElementById('mob-terrain-menu').style.display = 'none';
   clearInfoPanel();
 
   const remaining = 2 - G.playerActions.length;
@@ -800,29 +846,22 @@ function updateUI() {
   updatePieceList('p2');
 }
 
-function updatePieceList(owner) {
-  const el = document.getElementById(`${owner}-pieces`);
-  if (!el) return;
-  el.innerHTML = '';
-
+function buildPieceChips(containerEl, owner, includeHandClick) {
+  containerEl.innerHTML = '';
   const pieces = allPieces(G, owner);
   for (const { layer, piece } of pieces) {
     const chip = document.createElement('span');
     chip.className = 'piece-chip';
     if (piece.reviving) chip.classList.add('in-depth');
-
-    const sym = CONFIG.PIECE_SYMBOL[piece.type];
-    const lbl = CONFIG.PIECE_LABEL[piece.type];
-    chip.textContent = `${sym}${lbl} ${piece.hp}❤`;
+    chip.textContent = `${CONFIG.PIECE_SYMBOL[piece.type]}${CONFIG.PIECE_LABEL[piece.type]} ${piece.hp}❤`;
     chip.style.borderColor = CONFIG.PIECE_COLOR[piece.type];
     chip.title = `${layer === 'depth' ? '深層' : '表層'} HP:${piece.hp}/${piece.maxHp}`;
-    el.appendChild(chip);
+    containerEl.appendChild(chip);
   }
+}
 
-  // Hand pieces
-  const handEl = document.getElementById(`${owner}-hand`);
-  if (!handEl) return;
-  handEl.innerHTML = '';
+function buildHandChips(containerEl, owner) {
+  containerEl.innerHTML = '';
   const hand = owner === 'p1' ? G.p1Hand : G.p2Hand;
   for (const piece of hand) {
     const chip = document.createElement('span');
@@ -833,19 +872,47 @@ function updatePieceList(owner) {
       chip.classList.add('clickable');
       chip.addEventListener('click', () => selectHandPiece(piece));
     }
-    handEl.appendChild(chip);
+    containerEl.appendChild(chip);
   }
+}
+
+function updatePieceList(owner) {
+  // PC side-panel
+  const pcPieces = document.getElementById(`${owner}-pieces`);
+  if (pcPieces) buildPieceChips(pcPieces, owner);
+  const pcHand = document.getElementById(`${owner}-hand`);
+  if (pcHand) buildHandChips(pcHand, owner);
+
+  // Mobile tab panels
+  const mobPieces = document.getElementById(`mob-${owner}-pieces`);
+  if (mobPieces) buildPieceChips(mobPieces, owner);
+  const mobHand = document.getElementById(`mob-${owner}-hand`);
+  if (mobHand) buildHandChips(mobHand, owner);
 }
 
 // ── Log ──────────────────────────────────────────────────────────
 function addLog(msg, cls = '') {
-  const el   = document.getElementById('log-list');
-  const entry = document.createElement('div');
-  entry.className = `log-entry${cls ? ' log-'+cls : ''}`;
-  entry.textContent = msg;
-  el.prepend(entry);
-  // Keep only last 60 entries
-  while (el.children.length > 60) el.removeChild(el.lastChild);
+  const className = `log-entry${cls ? ' log-'+cls : ''}`;
+
+  // PC log in left panel
+  const el = document.getElementById('log-list');
+  if (el) {
+    const entry = document.createElement('div');
+    entry.className = className;
+    entry.textContent = msg;
+    el.prepend(entry);
+    while (el.children.length > 60) el.removeChild(el.lastChild);
+  }
+
+  // Mobile log popup list (mirror)
+  const popupEl = document.getElementById('log-popup-list');
+  if (popupEl) {
+    const entry = document.createElement('div');
+    entry.className = className;
+    entry.textContent = msg;
+    popupEl.prepend(entry);
+    while (popupEl.children.length > 60) popupEl.removeChild(popupEl.lastChild);
+  }
 }
 
 // ── Game over ─────────────────────────────────────────────────────

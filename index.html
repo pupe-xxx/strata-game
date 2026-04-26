@@ -13,38 +13,65 @@
       <div id="logo">STRATA</div>
       <div id="header-info">
         <span id="turn-display">ターン 1</span>
-        <span id="phase-display">あなたのターン</span>
+        <button id="btn-log-popup" class="mobile-only">ログ</button>
       </div>
     </header>
 
     <div id="game-layout">
 
-      <!-- ===== LEFT INFO PANEL (bottom sheet on mobile) ===== -->
+      <!-- ===== LEFT PANEL (PC: log/piece-info | Mobile: 3-tab) ===== -->
       <aside id="info-panel">
-        <button id="btn-close-info" class="mobile-only">✕ 閉じる</button>
-        <div class="section-title">駒情報</div>
-        <div id="info-empty">駒をクリックすると<br>詳細が表示されます</div>
-        <div id="info-content" style="display:none">
-          <div id="info-name"></div>
-          <div id="info-owner"></div>
-          <div id="info-hp"></div>
-          <div id="info-status" class="info-status"></div>
-          <hr class="info-divider">
-          <div class="info-label">移動</div>
-          <div id="info-move" class="info-value"></div>
-          <div class="info-label">攻撃</div>
-          <div id="info-attack" class="info-value"></div>
-          <div class="info-label">地形変形</div>
-          <div id="info-terrain" class="info-value"></div>
-          <div class="info-label">スキル</div>
-          <div id="info-skill" class="info-value skill-value"></div>
-          <hr class="info-divider">
-          <div class="info-label">特性</div>
-          <div id="info-trait" class="info-value trait-value"></div>
-          <hr class="info-divider">
-          <div class="info-label">操作ガイド</div>
-          <div id="info-guide" class="info-value guide-value"></div>
+
+        <!-- Mobile tab buttons -->
+        <div id="info-tabs" class="mobile-only">
+          <button class="info-tab active" data-tab="you">あなた</button>
+          <button class="info-tab" data-tab="cpu">相手</button>
+          <button class="info-tab" data-tab="selected" id="info-tab-selected">選択中</button>
         </div>
+
+        <!-- Tab: あなた / PC: ログ -->
+        <div id="tab-you-panel" class="tab-panel">
+          <div id="pc-log-area" class="pc-only">
+            <div class="section-title">ログ</div>
+            <div id="log-list"></div>
+          </div>
+          <div class="mobile-only">
+            <div class="player-label you-label" style="margin-bottom:4px">あなた</div>
+            <div class="piece-list" id="mob-p1-pieces"></div>
+            <div class="hand-area" id="mob-p1-hand"></div>
+          </div>
+        </div>
+
+        <!-- Tab: 相手 (mobile only) -->
+        <div id="tab-cpu-panel" class="tab-panel" style="display:none">
+          <div class="player-label cpu-label" style="margin-bottom:4px">相手</div>
+          <div class="piece-list" id="mob-p2-pieces"></div>
+          <div class="hand-area" id="mob-p2-hand"></div>
+        </div>
+
+        <!-- Tab: 選択中 / PC: 駒詳細 -->
+        <div id="tab-selected-panel" class="tab-panel" style="display:none">
+          <div id="info-empty">駒をクリックすると<br>詳細が表示されます</div>
+          <div id="info-content" style="display:none">
+            <div id="info-name"></div>
+            <div id="info-owner"></div>
+            <div id="info-hp"></div>
+            <div id="info-status" class="info-status"></div>
+            <hr class="info-divider">
+            <div class="info-label">移動</div>
+            <div id="info-move" class="info-value"></div>
+            <div class="info-label">攻撃</div>
+            <div id="info-attack" class="info-value"></div>
+            <div class="info-label">地形変形</div>
+            <div id="info-terrain" class="info-value"></div>
+            <div class="info-label">スキル</div>
+            <div id="info-skill" class="info-value skill-value"></div>
+            <hr class="info-divider">
+            <div class="info-label">特性</div>
+            <div id="info-trait" class="info-value trait-value"></div>
+          </div>
+        </div>
+
       </aside>
 
       <!-- ===== BOARD + CONTROLS ===== -->
@@ -52,9 +79,7 @@
         <canvas id="game-canvas"></canvas>
         <div id="message-bar">駒を選択してください</div>
 
-        <!-- Controls row below canvas -->
         <div id="controls-row">
-
           <!-- Row 1: view controls -->
           <div class="ctrl-row ctrl-row-1">
             <div id="layer-toggle">
@@ -69,9 +94,8 @@
             </div>
           </div>
 
-          <!-- Row 2: actions (fixed layout — slots never shift) -->
+          <!-- Row 2: actions -->
           <div class="ctrl-row ctrl-row-2">
-            <!-- Action buttons (fixed width container) -->
             <div id="action-inline">
               <div id="action-btns">
                 <button class="act-btn" id="btn-move"        disabled>移動</button>
@@ -81,7 +105,6 @@
                 <button class="act-btn" id="btn-skill"       disabled>スキル</button>
                 <button class="act-btn" id="btn-pass-action">パス</button>
               </div>
-              <!-- Terrain sub-menu (absolute so it doesn't shift layout) -->
               <div id="terrain-menu" style="display:none">
                 <button class="terrain-opt" data-dir="up">凸（壁）</button>
                 <button class="terrain-opt" data-dir="down">凹（穴）</button>
@@ -89,7 +112,6 @@
               </div>
             </div>
 
-            <!-- Queued action slots + confirm (always right of actions) -->
             <div id="slots-confirm">
               <div id="slots">
                 <div class="slot" id="slot-0"><span class="slot-num">①</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="0" style="display:none">✕</button></div>
@@ -101,15 +123,14 @@
               </div>
             </div>
           </div>
-
-        </div><!-- controls-row -->
-      </div><!-- board-wrapper -->
+        </div>
+      </div>
 
       <!-- ===== SIDE PANEL ===== -->
       <aside id="side-panel">
 
-        <!-- CPU status -->
-        <section class="player-section" id="p2-section">
+        <!-- CPU status (PC only) -->
+        <section class="player-section pc-only" id="p2-section">
           <div class="player-label cpu-label">CPU</div>
           <div class="hand-area" id="p2-hand"></div>
           <div class="piece-list" id="p2-pieces"></div>
@@ -164,27 +185,32 @@
           </div>
         </section>
 
-        <!-- Player 1 status -->
-        <section class="player-section" id="p1-section">
+        <!-- Player 1 status (PC only) -->
+        <section class="player-section pc-only" id="p1-section">
           <div class="player-label you-label">あなた</div>
           <div class="piece-list" id="p1-pieces"></div>
           <div class="hand-area" id="p1-hand"></div>
         </section>
 
-        <!-- Selected piece info -->
-        <section id="selected-section">
-          <div class="section-title">選択中</div>
-          <div id="selected-info">—</div>
-        </section>
-
-        <!-- Battle log -->
-        <section id="log-section">
-          <div class="section-title">ログ</div>
-          <div id="log-list"></div>
+        <!-- Mobile: action buttons (shown when piece selected) -->
+        <section id="mob-action-section">
+          <div id="mob-action-btns">
+            <button class="act-btn mob-act" id="mob-btn-move"    disabled>移動</button>
+            <button class="act-btn mob-act" id="mob-btn-attack"  disabled>攻撃</button>
+            <button class="act-btn mob-act" id="mob-btn-terrain" disabled>地形</button>
+            <button class="act-btn mob-act" id="mob-btn-transit" disabled>層移動</button>
+            <button class="act-btn mob-act" id="mob-btn-skill"   disabled>スキル</button>
+            <button class="act-btn mob-act" id="mob-btn-pass">パス</button>
+          </div>
+          <div id="mob-terrain-menu" style="display:none">
+            <button class="terrain-opt" data-mob-dir="up">凸（壁）</button>
+            <button class="terrain-opt" data-mob-dir="down">凹（穴）</button>
+            <button class="terrain-opt" id="mob-btn-terrain-cancel">×</button>
+          </div>
         </section>
 
       </aside>
-    </div><!-- game-layout -->
+    </div>
 
     <!-- Game Over overlay -->
     <div id="gameover-overlay" style="display:none">
@@ -195,7 +221,18 @@
       </div>
     </div>
 
-  </div><!-- app -->
+    <!-- Log popup (mobile) -->
+    <div id="log-popup" style="display:none">
+      <div id="log-popup-box">
+        <div id="log-popup-header">
+          <span>ログ</span>
+          <button id="btn-close-log">✕</button>
+        </div>
+        <div id="log-popup-list"></div>
+      </div>
+    </div>
+
+  </div>
 
   <script src="js/config.js"></script>
   <script src="js/state.js"></script>
