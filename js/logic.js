@@ -29,20 +29,23 @@ function occACells(r, c) {
   ];
 }
 
-/** Pick a random valid position for Area A zone (avoiding B zones) */
+/** 全ての有効なArea A配置候補を列挙し、均一にランダム選択（偏りなし） */
 function randomOccAPosition(state) {
   const size = CONFIG.OCC_A_SIZE;
-  for (let attempt = 0; attempt < 300; attempt++) {
-    const r = 2 + Math.floor(Math.random() * (BS - size - 4));
-    const c = 2 + Math.floor(Math.random() * (BS - size - 4));
-    const cells = occACells(r, c);
-    if (!cells.every(cl => isValidCell(cl.r, cl.c))) continue;
-    // Don't overlap B zones
-    const noB = state.occB.every(bp =>
-      bCells(bp).every(b => !cells.some(cl => cl.r === b.r && cl.c === b.c)));
-    if (noB) return { r, c };
+  // 全有効ポジションを収集
+  const candidates = [];
+  for (let r = 0; r <= BS - size; r++) {
+    for (let c = 0; c <= BS - size; c++) {
+      const cells = occACells(r, c);
+      if (!cells.every(cl => isValidCell(cl.r, cl.c))) continue;
+      // Bゾーンと重複しない
+      const noB = state.occB.every(bp =>
+        bCells(bp).every(b => !cells.some(cl => cl.r === b.r && cl.c === b.c)));
+      if (noB) candidates.push({ r, c });
+    }
   }
-  return { r: Math.floor(BS / 2) - 1, c: Math.floor(BS / 2) - 1 };
+  if (candidates.length === 0) return { r: Math.floor(BS / 2) - 1, c: Math.floor(BS / 2) - 1 };
+  return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
 // ── Terrain helpers ───────────────────────────────────────────────

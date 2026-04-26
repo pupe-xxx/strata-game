@@ -50,36 +50,44 @@ function buildAnimQueue(snapshot, state) {
   return queue;
 }
 
-// 1駒ずつ順番にアニメーション再生
-function startAnimation(queue, onDone) {
-  if (queue.length === 0) { onDone(); return; }
-  let idx = 0;
+/** 複数駒を同時にアニメーション再生 */
+function animateGroup(group, onDone) {
+  if (group.length === 0) { onDone(); return; }
+  const start = performance.now();
 
-  function playNext() {
-    if (idx >= queue.length) { onDone(); return; }
-    const entry = queue[idx++];
-    const start = performance.now();
-
-    function frame(ts) {
-      const raw = Math.min(1, (ts - start) / ANIM_DURATION);
-      const t   = easeInOut(raw);
-      const posOverrides = new Map();
+  function frame(ts) {
+    const raw = Math.min(1, (ts - start) / ANIM_DURATION);
+    const t   = easeInOut(raw);
+    const posOverrides = new Map();
+    for (const entry of group) {
       posOverrides.set(entry.pieceId, {
         x: entry.fromX + (entry.toX - entry.fromX) * t,
         y: entry.fromY + (entry.toY - entry.fromY) * t,
       });
-      const activeFlash = damageFlash.size > 0 ? new Set(damageFlash.keys()) : null;
-      Renderer.draw(G, posOverrides, activeFlash);
-      if (raw < 1) {
-        requestAnimationFrame(frame);
-      } else {
-        setTimeout(playNext, 80);
-      }
     }
-    requestAnimationFrame(frame);
+    const activeFlash = damageFlash.size > 0 ? new Set(damageFlash.keys()) : null;
+    Renderer.draw(G, posOverrides, activeFlash);
+    if (raw < 1) {
+      requestAnimationFrame(frame);
+    } else {
+      onDone();
+    }
   }
+  requestAnimationFrame(frame);
+}
 
-  playNext();
+/** グループ配列を順番に再生（各グループは同時） */
+function startAnimation(groups, onDone) {
+  // groups は Array<Array<entry>> または Array<entry>（後方互換）
+  const normalised = Array.isArray(groups[0]) ? groups : [groups];
+  let i = 0;
+  function next() {
+    if (i >= normalised.length) { onDone(); return; }
+    const g = normalised[i++];
+    if (g.length === 0) { next(); return; }
+    animateGroup(g, () => setTimeout(next, 120));
+  }
+  next();
 }
 
 function getSkillName(pieceType) {
@@ -808,20 +816,43 @@ function confirmTurn() {
   setTimeout(() => {
     const snapshot   = snapshotPositions(G);
     const cpuActions = CpuAI.getCpuActions(G);
-    const allActions = [...G.playerActions, ...cpuActions.map(a => ({ ...a, owner:'p2' }))];
-    const log        = resolveActions(G, allActions);
-    const queue      = buildAnimQueue(snapshot, G);
+
+    // ── アクションをペアに分割（1P①+2P①、1P②+2P②） ──────────
+    const p1 = G.playerActions;
+    const p2 = cpuActions.map(a => ({ ...a, owner: 'p2' }));
+    const pairCount = Math.max(p1.length, p2.length);
+    const pairs = [];
+    for (let i = 0; i < pairCount; i++) {
+      const pair = [];
+      if (p1[i]) pair.push(p1[i]);
+      if (p2[i]) pair.push(p2[i]);
+      pairs.push(pair);
+    }
+    const allActions = pairs.flat();
+
+    const log = resolveActions(G, allActions);
+
+    // ── アニメーションをペア別に分割 ─────────────────────────────
+    const fullQueue = buildAnimQueue(snapshot, G);
+    const pairGroups = pairs.map(pair => {
+      const ids = new Set(pair.map(a => a.pieceId));
+      return fullQueue.filter(e => ids.has(e.pieceId));
+    });
+    // スキル押し出し等で動いた駒（どのペアにも属さない）は最終グループへ
+    const assigned = new Set(pairGroups.flat().map(e => e.pieceId));
+    const leftover  = fullQueue.filter(e => !assigned.has(e.pieceId));
+    if (leftover.length > 0) {
+      if (pairGroups.length > 0) pairGroups[pairGroups.length - 1].push(...leftover);
+      else pairGroups.push(leftover);
+    }
 
     clearSlots();
     G.turn++;
     updateUI();
 
     const finish = () => {
-      // Register damage flash for hurt pieces
       const flashUntil = Date.now() + 900;
-      for (const pid of G.damagedThisTurn ?? []) {
-        damageFlash.set(pid, flashUntil);
-      }
+      for (const pid of G.damagedThisTurn ?? []) damageFlash.set(pid, flashUntil);
       G.damagedThisTurn = [];
 
       log.forEach(msg => {
@@ -845,8 +876,8 @@ function confirmTurn() {
       tick();
     };
 
-    if (queue.length > 0) {
-      startAnimation(queue, finish);
+    if (fullQueue.length > 0) {
+      startAnimation(pairGroups, finish);
     } else {
       Renderer.draw(G);
       finish();

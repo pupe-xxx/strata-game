@@ -591,10 +591,13 @@ const Renderer = (() => {
     const layer = state.viewLayer;
     const C     = CONFIG.CLR;
 
-    // Base cells (skip octagonal corners)
+    // Base cells — void color for invalid cells, normal for valid
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
-        if (!isValidCell(r, c)) continue;
+        if (!isValidCell(r, c)) {
+          drawCell(r, c, '#050a0f', null);  // dark void — defines octagon edge
+          continue;
+        }
         const even  = (r + c) % 2 === 0;
         const bgCol = layer === 'surface'
           ? (even ? C.SURFACE_EVEN : C.SURFACE_ODD)

@@ -4,8 +4,8 @@
 const CONFIG = Object.freeze({
   BOARD_SIZE: 16,
 
-  // Octagonal shape: cut corners where r+c < CUT or equivalent
-  CORNER_CUT: 4,
+  // Octagonal shape: larger cut = rounder octagon
+  CORNER_CUT: 5,
 
   // Isometric canvas base dimensions
   CANVAS_W: 900,
