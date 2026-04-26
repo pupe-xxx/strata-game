@@ -373,7 +373,11 @@ function handleCanvasInteraction(px, py) {
 
   // Select a player piece
   if (clickedPiece && clickedPiece.owner === 'p1') {
-    // Check if this piece is already used in a slot
+    // Clicking the already-selected piece deselects it
+    if (G.selected && G.selected.layer === layer && G.selected.r === r && G.selected.c === c) {
+      deselect();
+      return;
+    }
     const alreadyUsed = G.playerActions.some(a => a.pieceId === clickedPiece.id);
     if (alreadyUsed) {
       setMessage('この駒はすでにアクション済みです');
