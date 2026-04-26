@@ -169,14 +169,9 @@ function bindEvents() {
   document.getElementById('btn-surface').addEventListener('click', () => setLayer('surface'));
   document.getElementById('btn-depth').addEventListener('click',   () => setLayer('depth'));
 
-  // 4-direction view buttons
+  // View buttons (no-op for hex top-down view)
   document.querySelectorAll('.view-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const d = parseInt(btn.dataset.dir);
-      Renderer.setViewDir(d);
-      document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
+    btn.style.display = 'none';
   });
 
   // Action buttons
@@ -267,7 +262,7 @@ function bindEvents() {
     btn.addEventListener('click', () => switchInfoTab(btn.dataset.tab));
   });
 
-  // Mobile: action buttons (mirror desktop)
+  // Mobile action buttons
   document.getElementById('mob-btn-move')   ?.addEventListener('click', () => setActionMode('MOVE'));
   document.getElementById('mob-btn-attack') ?.addEventListener('click', () => setActionMode('ATTACK'));
   document.getElementById('mob-btn-terrain')?.addEventListener('click', () => {
@@ -281,6 +276,8 @@ function bindEvents() {
     document.getElementById('btn-transit').click());
   document.getElementById('mob-btn-skill')  ?.addEventListener('click', () => setActionMode('SKILL'));
   document.getElementById('mob-btn-pass')   ?.addEventListener('click', queuePass);
+  // Hide view buttons on mobile too (hex is always top-down)
+  document.querySelectorAll('.view-btn').forEach(b => b.style.display = 'none');
 
   // Mobile terrain submenu
   document.querySelectorAll('.terrain-opt[data-mob-dir]').forEach(btn => {
@@ -578,7 +575,7 @@ function selectHandPiece(piece) {
   G.attackCells = [];
   G.terrainDir  = null;
   clearInfoPanel();
-  // P1 deploy zone: back 3 rows on 16×16 board, valid octagonal cells only
+  // P1 deploy zone: bottom 3 hex rows (high row indices), valid hex cells only
   const deployStart = CONFIG.BOARD_SIZE - 4;
   for (let r = deployStart; r < CONFIG.BOARD_SIZE; r++) {
     for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {

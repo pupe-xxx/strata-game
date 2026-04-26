@@ -1,50 +1,55 @@
 // ===== STRATA — Game Logic =====
 'use strict';
 
-const ORTHO = [[0,1],[0,-1],[1,0],[-1,0]];
-const ALL8  = [[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]];
+// Hex grid: 6 axial directions  (all pieces use same 6 directions)
+const HEX6  = [[0,1],[0,-1],[1,0],[-1,0],[1,-1],[-1,1]];
+const ORTHO = HEX6;
+const ALL8  = HEX6;
 const BS    = CONFIG.BOARD_SIZE;
+const R     = CONFIG.BOARD_RADIUS;  // center index = R (e.g., 7)
 
-/** Octagonal validity check — cuts corners per CORNER_CUT */
-function isValidCell(r, c) {
-  if (r < 0 || r >= BS || c < 0 || c >= BS) return false;
-  const cut = CONFIG.CORNER_CUT;
-  const n   = BS - 1;
-  if (r + c       < cut) return false;
-  if (r + (n - c) < cut) return false;
-  if ((n - r) + c < cut) return false;
-  if ((n - r) + (n - c) < cut) return false;
-  return true;
+/** Hex validity: max(|q|,|r|,|q+r|) <= BOARD_RADIUS */
+function isValidCell(row, col) {
+  if (row < 0 || row >= BS || col < 0 || col >= BS) return false;
+  const q = col - R, r = row - R;
+  return Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r)) <= R;
+}
+
+/** Hex Manhattan distance between two cells */
+function hexDist(r1, c1, r2, c2) {
+  const q1 = c1 - R, rr1 = r1 - R;
+  const q2 = c2 - R, rr2 = r2 - R;
+  const dq = q1 - q2, dr = rr1 - rr2;
+  return Math.max(Math.abs(dq), Math.abs(dr), Math.abs(dq + dr));
 }
 
 function inBounds(r, c) { return isValidCell(r, c); }
 
 /** 2×2 cells of the Area A zone (always surface layer) */
-function occACells(r, c) {
+/** Area A zone: 3-hex triangle */
+function occACells(row, col) {
   return [
-    { r, c, layer:'surface' },
-    { r, c:c+1, layer:'surface' },
-    { r:r+1, c, layer:'surface' },
-    { r:r+1, c:c+1, layer:'surface' },
+    { r: row,   c: col,   layer:'surface' },
+    { r: row,   c: col+1, layer:'surface' },
+    { r: row+1, c: col,   layer:'surface' },
   ];
 }
 
-/** 全ての有効なArea A配置候補を列挙し、均一にランダム選択（偏りなし） */
+/** Balanced Area A spawn — constrained to neutral center band */
 function randomOccAPosition(state) {
-  const size = CONFIG.OCC_A_SIZE;
-  // 全有効ポジションを収集
+  const neutralR = CONFIG.OCC_A_NEUTRAL_R;
   const candidates = [];
-  for (let r = 0; r <= BS - size; r++) {
-    for (let c = 0; c <= BS - size; c++) {
-      const cells = occACells(r, c);
+  for (let row = 0; row < BS; row++) {
+    if (Math.abs(row - R) > neutralR) continue;
+    for (let col = 0; col < BS; col++) {
+      const cells = occACells(row, col);
       if (!cells.every(cl => isValidCell(cl.r, cl.c))) continue;
-      // Bゾーンと重複しない
       const noB = state.occB.every(bp =>
         bCells(bp).every(b => !cells.some(cl => cl.r === b.r && cl.c === b.c)));
-      if (noB) candidates.push({ r, c });
+      if (noB) candidates.push({ r: row, c: col });
     }
   }
-  if (candidates.length === 0) return { r: Math.floor(BS / 2) - 1, c: Math.floor(BS / 2) - 1 };
+  if (candidates.length === 0) return { r: R, c: R };
   return candidates[Math.floor(Math.random() * candidates.length)];
 }
 

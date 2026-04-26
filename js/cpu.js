@@ -7,15 +7,15 @@ const CpuAI = (() => {
 
   function distToOcc(state, r, c) {
     const dists = [];
-    // Area A zone (if preview or active)
+    // Area A zone
     const zone = state.occAZone;
     if (zone && zone.r !== null && (zone.phase === 'preview' || zone.phase === 'active')) {
       for (const cl of occACells(zone.r, zone.c))
-        dists.push(Math.abs(r - cl.r) + Math.abs(c - cl.c));
+        dists.push(hexDist(r, c, cl.r, cl.c));
     }
     // Area B points
     for (const b of state.occB.flatMap(bp => bCells(bp)))
-      dists.push(Math.abs(r - b.r) + Math.abs(c - b.c));
+      dists.push(hexDist(r, c, b.r, b.c));
     return dists.length > 0 ? Math.min(...dists) : 999;
   }
 
