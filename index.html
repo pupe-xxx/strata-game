@@ -22,11 +22,10 @@
       <!-- ===== LEFT PANEL (PC: log/piece-info | Mobile: 3-tab) ===== -->
       <aside id="info-panel">
 
-        <!-- Mobile tab buttons -->
+        <!-- Mobile tab buttons (2 tabs only) -->
         <div id="info-tabs" class="mobile-only">
           <button class="info-tab active" data-tab="you">あなた</button>
           <button class="info-tab" data-tab="cpu">相手</button>
-          <button class="info-tab" data-tab="selected" id="info-tab-selected">選択中</button>
         </div>
 
         <!-- Tab: あなた / PC: ログ -->
@@ -36,7 +35,6 @@
             <div id="log-list"></div>
           </div>
           <div class="mobile-only">
-            <div class="player-label you-label" style="margin-bottom:4px">あなた</div>
             <div class="piece-list" id="mob-p1-pieces"></div>
             <div class="hand-area" id="mob-p1-hand"></div>
           </div>
@@ -44,7 +42,6 @@
 
         <!-- Tab: 相手 (mobile only) -->
         <div id="tab-cpu-panel" class="tab-panel" style="display:none">
-          <div class="player-label cpu-label" style="margin-bottom:4px">相手</div>
           <div class="piece-list" id="mob-p2-pieces"></div>
           <div class="hand-area" id="mob-p2-hand"></div>
         </div>

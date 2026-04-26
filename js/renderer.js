@@ -42,10 +42,12 @@ const Renderer = (() => {
 
   function resize() {
     const isMobile = window.innerWidth <= 700;
-    const sideW    = isMobile ? 0 : 190 + 220 + 24;
+    const sideW    = isMobile ? 0 : 190 + 210 + 24;
     const headerH  = isMobile ? 44 : 52;
-    // Mobile: reserve space for controls (2 rows ~100px) + side strip (~90px)
-    const reserveH = isMobile ? 200 : 0;
+    // Mobile: reserve bottom panels (36vh) + controls row (~90px)
+    const reserveH = isMobile
+      ? Math.round(window.innerHeight * 0.36) + 90
+      : 80;  // PC: reserve controls area below canvas
     const availW   = window.innerWidth  - sideW - (isMobile ? 8 : 16);
     const availH   = window.innerHeight - headerH - reserveH;
     const scaleW   = availW  / CONFIG.CANVAS_W;

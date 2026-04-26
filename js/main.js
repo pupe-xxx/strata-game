@@ -109,6 +109,14 @@ function setActBtn(id, opts) {
 // ── Init ──────────────────────────────────────────────────────────
 function initGame() {
   G = createInitialState();
+  // On mobile, move controls-row to be a direct grid child of game-layout
+  // so it gets its own grid row and isn't clipped by board-wrapper overflow.
+  if (isMobile()) {
+    const ctrl = document.getElementById('controls-row');
+    const gameLayout = document.getElementById('game-layout');
+    const infoPanel  = document.getElementById('info-panel');
+    gameLayout.insertBefore(ctrl, infoPanel);
+  }
   Renderer.init(document.getElementById('game-canvas'));
   Renderer.resize();
   bindEvents();
@@ -482,31 +490,28 @@ function selectPiece(layer, r, c) {
   const skillName = getSkillName(piece.type);
   setActBtn('btn-skill', { disabled: !skillName || piece.reviving, text: skillName || 'スキル' });
 
-  // ── Auto-enter MOVE mode (show move + attack highlights simultaneously) ──
+  // ── Auto-enter MOVE mode ─────────────────────────────────────────
   G.actionMode = 'MOVE';
   if (piece.trapped) {
-    G.validCells  = [{ r, c, layer }];  // escape in place
+    G.validCells  = [{ r, c, layer }];
     G.attackCells = [];
-    btnMove.textContent = '脱出';
+    setActBtn('btn-move', { text: '脱出' });
     setMessage(`${lbl} が穴に捕まっています — 緑マスをクリックで脱出`);
   } else {
     G.validCells  = getValidMoves(G, layer, r, c);
     G.attackCells = getValidAttacks(G, layer, r, c);
-    btnMove.textContent = '移動';
-    const moveCount = G.validCells.length;
-    const atkCount  = G.attackCells.length;
-    setMessage(`${lbl} 選択 — 緑: 移動${moveCount}  赤: 攻撃${atkCount}  ボタンで他アクション`);
+    setActBtn('btn-move', { text: '移動' });
+    setMessage(`${lbl} 選択 — 緑: 移動${G.validCells.length}  赤: 攻撃${G.attackCells.length}  ボタンで他アクション`);
   }
 
   document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
-  btnMove.classList.add('active');
+  setActBtn('btn-move', { active: true });
 
-  // Update info panel and switch to 選択中 tab
+  // Update info panel
   updateInfoPanel(piece, def, layer);
   document.body.classList.add('piece-selected');
-  if (isMobile()) {
-    switchInfoTab('selected');
-  } else {
+  // PC: switch panels manually. Mobile: CSS (body.piece-selected) handles it.
+  if (!isMobile()) {
     document.getElementById('tab-you-panel').style.display      = 'none';
     document.getElementById('tab-selected-panel').style.display = '';
   }
