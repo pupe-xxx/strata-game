@@ -226,13 +226,7 @@ const CpuAI = (() => {
     }
 
     const action1 = pickOne(candidates);
-
-    // For second action: exclude pieces already used
-    const usedId = action1.pieceId;
-    const remaining = candidates.filter(a => a.pieceId !== usedId);
-    const action2 = pickOne(remaining);
-
-    return [action1, action2].filter(a => a.type !== 'PASS');
+    return action1.type !== 'PASS' ? [action1] : [];
   }
 
   return { getCpuActions };

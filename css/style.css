@@ -418,6 +418,9 @@ html, body {
 /* Mobile action section — hidden everywhere by default */
 #mob-action-section { display: none !important; }
 
+/* 1アクション/ターン制のため②スロットは常に非表示 */
+#slot-1 { display: none !important; }
+
 /* ===== GAME OVER ===== */
 #gameover-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.85);
@@ -502,31 +505,43 @@ html, body {
     align-items: center;
   }
 
-  /* controls-row moved to game-layout level by JS — single flex row */
+  /* controls-row moved to game-layout level by JS — 2 rows */
   #controls-row {
     grid-area: ctrl;
-    flex-direction: row;   /* flatten to single row */
+    flex-direction: row;
+    flex-wrap: wrap;       /* ①が行1、残りが行2 */
     align-items: center;
-    flex-wrap: nowrap;
     padding: 3px 5px;
-    gap: 5px;
+    gap: 4px;
     max-width: none;
     background: var(--panel);
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
-    overflow-x: auto;
   }
 
-  /* slots+confirm first, then layer+view (解除の右に表層/方角) */
-  .ctrl-row-2 { order: 1; flex-shrink: 0; align-items: center; }
-  .ctrl-row-1 { order: 2; flex-shrink: 0; }
+  /* display:contents で ctrl-row の枠を消して子要素を直接 controls-row に参加させる */
+  .ctrl-row-2   { display: contents; }
+  #slots-confirm { display: contents; }
 
-  /* slots-confirm: horizontal on mobile */
-  #slots-confirm { flex-direction: row; flex: 0 0 auto; gap: 3px; min-width: 0; }
-  #slots { flex-shrink: 1; gap: 3px; }
-  .slot  { min-width: 54px; max-width: 80px; font-size: 9px; min-height: 28px; padding: 2px 3px; }
-  .slot-text { font-size: 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  #confirm-area { gap: 3px; flex-shrink: 0; }
+  /* 行1: スロット ① のみ（② は非表示） — flex-basis:100% で折り返し */
+  #slots {
+    order: 1;
+    flex-basis: 100%;
+    display: flex;
+    gap: 4px;
+  }
+  .slot {
+    min-width: 80px;
+    font-size: 10px;
+    min-height: 28px;
+    padding: 2px 4px;
+  }
+  .slot-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+  /* 行2: 確定・解除 → 表層・深層 → 方角 */
+  #confirm-area { order: 2; display: flex; gap: 4px; flex-shrink: 0; }
+  .ctrl-row-1   { order: 3; flex-shrink: 0; display: flex; gap: 5px; align-items: center; }
+  #action-inline { display: none !important; }
 
   /* Left panel: 2-tab panel */
   #info-panel {
