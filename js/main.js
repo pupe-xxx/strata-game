@@ -715,6 +715,13 @@ function fillSlot(idx, action, piece) {
   textEl.textContent   = desc;
   slotEl.classList.add('filled');
   clearEl.style.display = 'inline';
+
+  // スマホヘッダーのスロット表示も更新
+  const mobEl = document.getElementById(`mob-slot-${idx}`);
+  if (mobEl) {
+    mobEl.textContent = `${idx === 0 ? '①' : '②'} ${desc}`;
+    mobEl.classList.add('filled');
+  }
 }
 
 function clearSlot(idx) {
@@ -743,6 +750,12 @@ function clearSlots() {
     slotEl.querySelector('.slot-text').textContent = '未設定';
     slotEl.classList.remove('filled');
     slotEl.querySelector('.slot-clear').style.display = 'none';
+    // スマホヘッダーのスロット表示もリセット
+    const mobEl = document.getElementById(`mob-slot-${i}`);
+    if (mobEl) {
+      mobEl.textContent = `${i === 0 ? '①' : '②'} 未設定`;
+      mobEl.classList.remove('filled');
+    }
   }
   document.getElementById('btn-confirm').disabled = true;
 }
