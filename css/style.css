@@ -502,16 +502,31 @@ html, body {
     align-items: center;
   }
 
-  /* controls-row moved to game-layout level by JS */
+  /* controls-row moved to game-layout level by JS — single flex row */
   #controls-row {
     grid-area: ctrl;
-    padding: 3px 6px;
-    gap: 4px;
+    flex-direction: row;   /* flatten to single row */
+    align-items: center;
+    flex-wrap: nowrap;
+    padding: 3px 5px;
+    gap: 5px;
     max-width: none;
     background: var(--panel);
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
+    overflow-x: auto;
   }
+
+  /* slots+confirm first, then layer+view (解除の右に表層/方角) */
+  .ctrl-row-2 { order: 1; flex-shrink: 0; align-items: center; }
+  .ctrl-row-1 { order: 2; flex-shrink: 0; }
+
+  /* slots-confirm: horizontal on mobile */
+  #slots-confirm { flex-direction: row; flex: 0 0 auto; gap: 3px; min-width: 0; }
+  #slots { flex-shrink: 1; gap: 3px; }
+  .slot  { min-width: 54px; max-width: 80px; font-size: 9px; min-height: 28px; padding: 2px 3px; }
+  .slot-text { font-size: 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #confirm-area { gap: 3px; flex-shrink: 0; }
 
   /* Left panel: 2-tab panel */
   #info-panel {

@@ -44,9 +44,9 @@ const Renderer = (() => {
     const isMobile = window.innerWidth <= 700;
     const sideW    = isMobile ? 0 : 190 + 210 + 24;
     const headerH  = isMobile ? 44 : 52;
-    // Mobile: reserve bottom panels (36vh) + controls row (~90px)
+    // Mobile: reserve bottom panels (36vh) + controls (now 1 row ~44px)
     const reserveH = isMobile
-      ? Math.round(window.innerHeight * 0.36) + 90
+      ? Math.round(window.innerHeight * 0.36) + 44
       : 80;  // PC: reserve controls area below canvas
     const availW   = window.innerWidth  - sideW - (isMobile ? 8 : 16);
     const availH   = window.innerHeight - headerH - reserveH;
