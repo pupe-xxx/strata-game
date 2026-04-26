@@ -94,7 +94,7 @@ const Renderer = (() => {
       case 2: r = BS-1-row; c = BS-1-col;   break;
       case 3: c = row;      r = BS-1-col;   break;
     }
-    if (r >= 0 && r < BS && c >= 0 && c < BS) return { r, c };
+    if (isValidCell(r, c)) return { r, c };
     return null;
   }
 
@@ -395,22 +395,30 @@ const Renderer = (() => {
   function drawSpecialMarkers(state, layer) {
     const C = CONFIG.CLR;
     if (layer === 'surface') {
-      // ── OCC_A control fill ──
-      const ctrlA = state.occMeta?.A;
-      if (ctrlA) {
-        const fillCol = ctrlA === 'p1' ? 'rgba(79,195,247,0.18)' : 'rgba(239,83,80,0.18)';
-        for (const pos of CONFIG.OCC_A) {
+      // ── Area A Zone ──────────────────────────────────────────
+      const zone = state.occAZone;
+      if (zone && zone.r !== null && (zone.phase === 'preview' || zone.phase === 'active')) {
+        const cells = occACells(zone.r, zone.c);
+        const isActive = zone.phase === 'active';
+        const ctrlA = state.occMeta?.A;
+
+        for (const pos of cells) {
           const { x, y } = cellToScreen(pos.r, pos.c);
           diamond(x, y, HW, HH);
-          ctx.fillStyle = fillCol;
+          if (isActive && ctrlA) {
+            ctx.fillStyle = ctrlA === 'p1' ? 'rgba(79,195,247,0.25)' : 'rgba(239,83,80,0.25)';
+          } else {
+            ctx.fillStyle = isActive ? 'rgba(255,215,0,0.20)' : C.OCC_A_PRE;
+          }
           ctx.fill();
+          ctx.strokeStyle = isActive ? C.OCC_A : 'rgba(255,215,0,0.5)';
+          ctx.lineWidth = (isActive ? 1.5 : 0.8) * scale;
+          ctx.stroke();
         }
+        // Label on center cell
+        const label = isActive ? `★A残${zone.timer}` : `★A予${zone.timer}`;
+        drawMarkerRing(zone.r, zone.c, isActive ? C.OCC_A : 'rgba(255,215,0,0.6)', label);
       }
-      // OCC_A rings + label
-      for (const pos of CONFIG.OCC_A) {
-        drawMarkerRing(pos.r, pos.c, C.OCC_A, '');
-      }
-      drawMarkerRing(CONFIG.OCC_A[1].r, CONFIG.OCC_A[1].c, C.OCC_A, '★A');
 
       // ── B-move flash ──
       const isFlashing = Date.now() < (state.bFlashUntil ?? 0);
@@ -583,9 +591,10 @@ const Renderer = (() => {
     const layer = state.viewLayer;
     const C     = CONFIG.CLR;
 
-    // Base cells
+    // Base cells (skip octagonal corners)
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
+        if (!isValidCell(r, c)) continue;
         const even  = (r + c) % 2 === 0;
         const bgCol = layer === 'surface'
           ? (even ? C.SURFACE_EVEN : C.SURFACE_ODD)
@@ -606,11 +615,11 @@ const Renderer = (() => {
       drawSelectedCell(state.selected.r, state.selected.c);
     }
 
-    // Sort all cells by painter's algorithm (back→front)
+    // Sort valid cells by painter's algorithm (back→front)
     const cells = [];
     for (let r = 0; r < BS; r++)
       for (let c = 0; c < BS; c++)
-        cells.push({ r, c });
+        if (isValidCell(r, c)) cells.push({ r, c });
     cells.sort((a, b) => sortKey(a.r, a.c) - sortKey(b.r, b.c));
 
     // Draw terrain + ghost + pieces together per cell (correct overlap for tall pieces)

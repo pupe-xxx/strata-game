@@ -413,6 +413,30 @@ html, body {
 
 /* ===== OCCUPATION ===== */
 #occ-section { padding: 5px; border: 1px solid var(--border); border-radius: var(--radius); }
+
+/* Score display */
+.occ-score {
+  font-size: 11px;
+  font-weight: bold;
+  color: var(--text);
+  text-align: center;
+  padding: 3px 0;
+}
+
+/* Area A zone status */
+.occ-a-status {
+  font-size: 10px;
+  padding: 3px 5px;
+  border-radius: 3px;
+  margin: 4px 0;
+  text-align: center;
+  border: 1px solid var(--border);
+}
+.occ-a-status.dormant  { color: var(--text-dim); }
+.occ-a-status.preview  { color: var(--gold); border-color: rgba(255,215,0,.4); background: rgba(255,215,0,.08); }
+.occ-a-status.active   { color: var(--gold); border-color: var(--gold); background: rgba(255,215,0,.15); font-weight: bold; }
+.occ-a-status.active.p1 { color: var(--p1); border-color: var(--p1); background: rgba(79,195,247,.12); }
+.occ-a-status.active.p2 { color: var(--p2); border-color: var(--p2); background: rgba(239,83,80,.12); }
 .occ-row     { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; }
 .occ-key     { width: 18px; font-size: 10px; font-weight: bold; flex-shrink: 0; }
 .occ-A-key   { color: var(--gold); }

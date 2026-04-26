@@ -5,7 +5,45 @@ const ORTHO = [[0,1],[0,-1],[1,0],[-1,0]];
 const ALL8  = [[0,1],[0,-1],[1,0],[-1,0],[1,1],[1,-1],[-1,1],[-1,-1]];
 const BS    = CONFIG.BOARD_SIZE;
 
-function inBounds(r, c) { return r >= 0 && r < BS && c >= 0 && c < BS; }
+/** Octagonal validity check — cuts corners per CORNER_CUT */
+function isValidCell(r, c) {
+  if (r < 0 || r >= BS || c < 0 || c >= BS) return false;
+  const cut = CONFIG.CORNER_CUT;
+  const n   = BS - 1;
+  if (r + c       < cut) return false;
+  if (r + (n - c) < cut) return false;
+  if ((n - r) + c < cut) return false;
+  if ((n - r) + (n - c) < cut) return false;
+  return true;
+}
+
+function inBounds(r, c) { return isValidCell(r, c); }
+
+/** 2×2 cells of the Area A zone (always surface layer) */
+function occACells(r, c) {
+  return [
+    { r, c, layer:'surface' },
+    { r, c:c+1, layer:'surface' },
+    { r:r+1, c, layer:'surface' },
+    { r:r+1, c:c+1, layer:'surface' },
+  ];
+}
+
+/** Pick a random valid position for Area A zone (avoiding B zones) */
+function randomOccAPosition(state) {
+  const size = CONFIG.OCC_A_SIZE;
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const r = 2 + Math.floor(Math.random() * (BS - size - 4));
+    const c = 2 + Math.floor(Math.random() * (BS - size - 4));
+    const cells = occACells(r, c);
+    if (!cells.every(cl => isValidCell(cl.r, cl.c))) continue;
+    // Don't overlap B zones
+    const noB = state.occB.every(bp =>
+      bCells(bp).every(b => !cells.some(cl => cl.r === b.r && cl.c === b.c)));
+    if (noB) return { r, c };
+  }
+  return { r: Math.floor(BS / 2) - 1, c: Math.floor(BS / 2) - 1 };
+}
 
 // ── Terrain helpers ───────────────────────────────────────────────
 
@@ -429,33 +467,46 @@ function getAreaController(state, cells) {
 }
 
 function updateOccupation(state) {
-  // OCC_A is always on surface
-  const occAcells = CONFIG.OCC_A.map(p => ({ ...p, layer: 'surface' }));
-  const ctrlA  = getAreaController(state, occAcells);
-  const ctrlB  = state.occB.map(bp => getAreaController(state, bCells(bp)));
-
-  state.occMeta.A  = ctrlA;
+  // ── Area B (unchanged) ────────────────────────────────────────
+  const ctrlB = state.occB.map(bp => getAreaController(state, bCells(bp)));
   state.occMeta.B0 = ctrlB[0];
   state.occMeta.B1 = ctrlB[1];
 
-  for (const owner of ['p1','p2']) {
-    const holdsA    = ctrlA === owner;
-    const holdsAnyB = ctrlB.some(c => c === owner);
+  // ── Area A Zone lifecycle ─────────────────────────────────────
+  const zone = state.occAZone;
+  zone.timer--;
 
-    if (holdsA && holdsAnyB) state.occAB[owner]++;
-    else                     state.occAB[owner] = 0;
-
-    if (holdsA) state.occA[owner]++;
-    else        state.occA[owner] = 0;
+  if (zone.phase === 'dormant' && zone.timer <= 0) {
+    // Transition dormant → preview
+    const pos = randomOccAPosition(state);
+    zone.r = pos.r;
+    zone.c = pos.c;
+    zone.phase = 'preview';
+    zone.timer = CONFIG.OCC_A_PREVIEW_TURNS;
+  } else if (zone.phase === 'preview' && zone.timer <= 0) {
+    // Transition preview → active
+    zone.phase = 'active';
+    zone.timer = CONFIG.OCC_A_ACTIVE_TURNS;
+  } else if (zone.phase === 'active' && zone.timer <= 0) {
+    // Score: give point to whoever controls the zone
+    const ctrl = getAreaController(state, occACells(zone.r, zone.c));
+    if (ctrl) state.occScore[ctrl]++;
+    zone.phase = 'dormant';
+    zone.timer = CONFIG.OCC_A_DORMANT_TURNS;
+    zone.r = null;
+    zone.c = null;
   }
+
+  state.occMeta.A = (zone.phase === 'active' && zone.r !== null)
+    ? getAreaController(state, occACells(zone.r, zone.c))
+    : null;
 }
 
 // ── Victory check ─────────────────────────────────────────────────
 
 function checkVictory(state) {
   for (const owner of ['p1','p2']) {
-    if (state.occAB[owner] >= CONFIG.WIN_AB) return owner;
-    if (state.occA[owner]  >= CONFIG.WIN_A)  return owner;
+    if (state.occScore[owner] >= CONFIG.WIN_SCORE) return owner;
   }
   return null;
 }

@@ -141,32 +141,33 @@
         <!-- Occupation counters -->
         <section id="occ-section">
           <div class="section-title">占領状況</div>
-          <div class="occ-row">
-            <span class="occ-key occ-A-key">A</span>
-            <div class="occ-bar-wrap">
-              <div class="occ-bar p1-bar" id="occ-A-p1-bar"></div>
-              <div class="occ-bar p2-bar" id="occ-A-p2-bar"></div>
-            </div>
-            <span class="occ-count" id="occ-A-count">0 / 0</span>
-          </div>
-          <div class="occ-row">
+
+          <!-- スコア -->
+          <div id="occ-score-display" class="occ-score">あなた 0pt  /  CPU 0pt</div>
+          <div class="victory-hint">先取 <b>2点</b> 勝利</div>
+
+          <!-- Area A zone status -->
+          <div id="occ-A-status" class="occ-a-status dormant">休止中</div>
+
+          <!-- B1 -->
+          <div class="occ-row" style="margin-top:6px">
             <span class="occ-key occ-B-key">B1</span>
             <div class="occ-bar-wrap">
               <div class="occ-bar p1-bar" id="occ-B0-p1-bar"></div>
               <div class="occ-bar p2-bar" id="occ-B0-p2-bar"></div>
             </div>
-            <span class="occ-count" id="occ-B0-count">0 / 0</span>
+            <span class="occ-count" id="occ-B0-count">—</span>
           </div>
+          <!-- B2 -->
           <div class="occ-row">
             <span class="occ-key occ-B-key">B2</span>
             <div class="occ-bar-wrap">
               <div class="occ-bar p1-bar" id="occ-B1-p1-bar"></div>
               <div class="occ-bar p2-bar" id="occ-B1-p2-bar"></div>
             </div>
-            <span class="occ-count" id="occ-B1-count">0 / 0</span>
+            <span class="occ-count" id="occ-B1-count">—</span>
           </div>
-          <div class="victory-hint">A+B同時 <b>5T</b> / A単独 <b>8T</b> で勝利</div>
-          <div class="victory-hint" id="b-move-timer">B移動: 5T後</div>
+          <div class="victory-hint" id="b-move-timer">B移動: 6T後</div>
           <div id="victory-warn" style="display:none"></div>
         </section>
 

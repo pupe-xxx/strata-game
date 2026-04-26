@@ -22,9 +22,9 @@ function makePiece(type, owner) {
     owner,
     hp: def.maxHp,
     maxHp: def.maxHp,
-    trapped: false,       // in a hole
-    reviving: false,      // waiting in depth after defeat
-    reviveTimer: 0,       // turns left before piece can act
+    trapped: false,
+    reviving: false,
+    reviveTimer: 0,
     justRevived: false,
   };
 }
@@ -48,48 +48,48 @@ function createInitialState() {
   }
 
   return {
-    // Grids
     surface,
     depth,
 
-    // Whose turn (p1 is human, p2 is CPU)
     turn: 1,
-    phase: 'PLAYER_INPUT',   // PLAYER_INPUT | RESOLVING | GAME_OVER
-
-    // Which layer the player is currently viewing / interacting with
+    phase: 'PLAYER_INPUT',
     viewLayer: 'surface',
 
-    // Pieces waiting to be deployed from hand
     p1Hand: CONFIG.HAND_PIECES.map(t => makePiece(t, 'p1')),
     p2Hand: CONFIG.HAND_PIECES.map(t => makePiece(t, 'p2')),
 
-    // Queued actions for this turn (up to 2)
     playerActions: [],
 
-    // Dynamic B-point positions (2×2 areas, top-left corner per point)
+    // Dynamic B-point positions
     occB: CONFIG.OCC_B_INIT.map(p => ({ r: p.r, c: p.c, layer: p.layer })),
-    bMoveIn: CONFIG.B_MOVE_INTERVAL,  // turns until next B move
-    bFlashUntil: 0,                   // timestamp: show B-move flash until this time
+    bMoveIn: CONFIG.B_MOVE_INTERVAL,
+    bFlashUntil: 0,
 
-    // Damage flash: piece IDs damaged this turn
     damagedThisTurn: [],
 
-    // Occupation consecutive turn counters
-    occAB: { p1:0, p2:0 },   // A + any B simultaneously
-    occA:  { p1:0, p2:0 },   // A alone (any)
-    occMeta: {                 // last holder per square for display
-      A: null, B0: null, B1: null,
+    // ── New Area A scoring system ─────────────────────────────
+    // phase: 'dormant' | 'preview' | 'active'
+    occAZone: {
+      phase: 'dormant',
+      r: null, c: null,     // top-left of 2×2 zone (null when dormant)
+      timer: CONFIG.OCC_A_DORMANT_TURNS,
+    },
+    occScore: { p1: 0, p2: 0 },  // first to WIN_SCORE wins
+
+    // ── Display metadata ──────────────────────────────────────
+    occMeta: {
+      A: null,   // controller of active A zone (or null)
+      B0: null,
+      B1: null,
     },
 
-    // DCP control in depth
     dcpControl: { alpha:null, beta:null, gamma:null },
 
-    // UI state
-    selected: null,           // { layer, r, c } currently selected cell
-    actionMode: null,         // 'MOVE'|'ATTACK'|'TERRAIN'|'DEPLOY'
-    terrainDir: null,         // 'up'|'down'
-    validCells: [],           // [{r,c,layer}] — move/terrain/skill targets (green)
-    attackCells: [],          // [{r,c,layer}] — shown simultaneously in MOVE mode (red)
+    selected: null,
+    actionMode: null,
+    terrainDir: null,
+    validCells: [],
+    attackCells: [],
 
     winner: null,
     message: '駒を選択してください',
@@ -106,7 +106,6 @@ function getPieceAt(state, layer, r, c) {
   return state[layer]?.[r]?.[c]?.piece ?? null;
 }
 
-/** Find a piece by id, returns { layer, r, c, piece } or null */
 function findPieceById(state, id) {
   for (const layer of ['surface','depth']) {
     for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
@@ -119,7 +118,6 @@ function findPieceById(state, id) {
   return null;
 }
 
-/** All pieces of an owner on both layers */
 function allPieces(state, owner) {
   const result = [];
   for (const layer of ['surface','depth']) {
@@ -133,22 +131,18 @@ function allPieces(state, owner) {
   return result;
 }
 
-/** Move piece physically on grid (no rule checking) */
 function movePieceOnGrid(state, fromLayer, fr, fc, toLayer, tr, tc) {
   const piece = state[fromLayer][fr][fc].piece;
   state[fromLayer][fr][fc].piece = null;
   state[toLayer][tr][tc].piece = piece;
 }
 
-/** Transfer defeated piece to other layer's revival position */
 function transferToRevival(state, layer, r, c) {
   const piece = state[layer][r][c].piece;
   if (!piece) return;
   state[layer][r][c].piece = null;
 
   const otherLayer = layer === 'surface' ? 'depth' : 'surface';
-  // Find the revival row for this owner in the other layer
-  // P1 revives near last row (depth), P2 near row 0
   const reviveRow  = piece.owner === 'p1' ? CONFIG.BOARD_SIZE - 1 : 0;
   const mid = Math.floor(CONFIG.BOARD_SIZE / 2);
   const reviveCols = Array.from({ length: CONFIG.BOARD_SIZE }, (_, i) => {
@@ -156,21 +150,18 @@ function transferToRevival(state, layer, r, c) {
     return i % 2 === 0 ? mid + d : mid - d;
   });
 
-  // Find first empty cell in revival zone
   for (const col of reviveCols) {
     if (!state[otherLayer][reviveRow]?.[col]?.piece) {
       piece.reviving = true;
       piece.reviveTimer = hasDCP(state, piece.owner, 'FAST_REVIVE') ? 0 : CONFIG.REVIVE_WAIT;
       piece.trapped = false;
-      piece.hp = piece.maxHp;  // restore HP on transfer
+      piece.hp = piece.maxHp;
       state[otherLayer][reviveRow][col].piece = piece;
       return;
     }
   }
-  // No space: permanent elimination
 }
 
-/** Tick revive timers; pieces become active when timer reaches 0 */
 function tickReviveTimers(state) {
   for (const layer of ['surface','depth']) {
     for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {

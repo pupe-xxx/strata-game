@@ -570,10 +570,12 @@ function selectHandPiece(piece) {
   G.attackCells = [];
   G.terrainDir  = null;
   clearInfoPanel();
-  // P1 deploy zone: back 3 rows (rows 8-10 for 11×11), surface only
-  for (let r = 8; r <= 10; r++) {
+  // P1 deploy zone: back 3 rows on 16×16 board, valid octagonal cells only
+  const deployStart = CONFIG.BOARD_SIZE - 4;
+  for (let r = deployStart; r < CONFIG.BOARD_SIZE; r++) {
     for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
-      if (!G.surface[r][c].piece) G.validCells.push({ r, c, layer: 'surface' });
+      if (isValidCell(r, c) && !G.surface[r][c].piece)
+        G.validCells.push({ r, c, layer: 'surface' });
     }
   }
   // hand piece deployment selected
@@ -865,27 +867,46 @@ function updateUI() {
     if (!bar) return;
     bar.style.width = `${Math.min(100, (value / max) * 100)}%`;
   }
-  // A行: A+B同時保持のターン数進捗
-  setBar('occ-A-p1-bar', G.occAB.p1, CONFIG.WIN_AB);
-  setBar('occ-A-p2-bar', G.occAB.p2, CONFIG.WIN_AB);
-  document.getElementById('occ-A-count').textContent = `${G.occAB.p1}/${G.occAB.p2}`;
+  // ── スコア表示 ─────────────────────────────────────────────────
+  const s1 = G.occScore?.p1 ?? 0;
+  const s2 = G.occScore?.p2 ?? 0;
+  const scoreEl = document.getElementById('occ-score-display');
+  if (scoreEl) scoreEl.textContent = `あなた ${s1}pt  /  CPU ${s2}pt`;
 
-  // B1行: B1ポイントの現在の支配者（バイナリ表示）
+  // ── Area Aゾーン状態 ───────────────────────────────────────────
+  const zone = G.occAZone;
+  const zoneEl = document.getElementById('occ-A-status');
+  if (zoneEl && zone) {
+    if (zone.phase === 'dormant') {
+      zoneEl.textContent = `休止中 (${zone.timer}T後に予告)`;
+      zoneEl.className = 'occ-a-status dormant';
+    } else if (zone.phase === 'preview') {
+      zoneEl.textContent = `★ 予告！ ${zone.timer}T後に出現`;
+      zoneEl.className = 'occ-a-status preview';
+    } else if (zone.phase === 'active') {
+      const ctrl = G.occMeta?.A;
+      const who  = ctrl === 'p1' ? 'あなたが制圧中' : ctrl === 'p2' ? 'CPUが制圧中' : '未制圧';
+      zoneEl.textContent = `★ 占領チャンス！ 残り${zone.timer}T  ${who}`;
+      zoneEl.className = `occ-a-status active ${ctrl ?? ''}`;
+    }
+  }
+
+  // ── B1/B2 制圧者 ───────────────────────────────────────────────
   const b0ctrl = G.occMeta?.B0;
   setBar('occ-B0-p1-bar', b0ctrl === 'p1' ? 1 : 0, 1);
   setBar('occ-B0-p2-bar', b0ctrl === 'p2' ? 1 : 0, 1);
   document.getElementById('occ-B0-count').textContent =
     b0ctrl === 'p1' ? 'あなた' : b0ctrl === 'p2' ? 'CPU' : '—';
 
-  // B2行: B2ポイント（深層）の現在の支配者
   const b1ctrl = G.occMeta?.B1;
   setBar('occ-B1-p1-bar', b1ctrl === 'p1' ? 1 : 0, 1);
   setBar('occ-B1-p2-bar', b1ctrl === 'p2' ? 1 : 0, 1);
   document.getElementById('occ-B1-count').textContent =
     b1ctrl === 'p1' ? 'あなた' : b1ctrl === 'p2' ? 'CPU' : '—';
+
   document.getElementById('b-move-timer').textContent = `B移動: ${G.bMoveIn}T後`;
 
-  // DCP control status
+  // ── DCP状態 ────────────────────────────────────────────────────
   for (const dcp of CONFIG.DCP) {
     const ctrl = G.dcpControl[dcp.key];
     const el = document.getElementById(`dcp-${dcp.key}`);
@@ -894,18 +915,13 @@ function updateUI() {
     el.style.color = ctrl === 'p1' ? '#4fc3f7' : ctrl === 'p2' ? '#ef5350' : '#888';
   }
 
-  // Victory proximity warning
+  // ── 勝利警告 ───────────────────────────────────────────────────
   const warnEl = document.getElementById('victory-warn');
   if (warnEl) {
     const msgs = [];
-    const p1ab = CONFIG.WIN_AB - G.occAB.p1;
-    const p2ab = CONFIG.WIN_AB - G.occAB.p2;
-    const p1a  = CONFIG.WIN_A  - G.occA.p1;
-    const p2a  = CONFIG.WIN_A  - G.occA.p2;
-    if (G.occAB.p1 > 0 && p1ab <= 2) msgs.push(`あと${p1ab}Tで勝利(A+B)`);
-    if (G.occAB.p2 > 0 && p2ab <= 2) msgs.push(`⚠ あと${p2ab}TでCPU勝利`);
-    if (G.occA.p1 > 0 && p1a <= 3)   msgs.push(`あと${p1a}Tで勝利(A単独)`);
-    if (G.occA.p2 > 0 && p2a <= 3)   msgs.push(`⚠ あと${p2a}TでCPU勝利(A)`);
+    if (s1 >= CONFIG.WIN_SCORE - 1) msgs.push('★ あと1点で勝利！');
+    if (s2 >= CONFIG.WIN_SCORE - 1) msgs.push('⚠ CPUあと1点！');
+    if (zone?.phase === 'active' && zone.timer <= 2) msgs.push(`★ Aゾーン判定まで${zone.timer}T!`);
     warnEl.textContent = msgs.join(' / ');
     warnEl.style.display = msgs.length > 0 ? 'block' : 'none';
   }

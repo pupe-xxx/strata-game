@@ -6,10 +6,17 @@ const CpuAI = (() => {
   // ── Scoring helpers ───────────────────────────────────────────
 
   function distToOcc(state, r, c) {
-    const dA  = Math.min(...CONFIG.OCC_A.map(a => Math.abs(r - a.r) + Math.abs(c - a.c)));
-    const allB = state.occB.flatMap(bp => bCells(bp));
-    const dBs = allB.map(b => Math.abs(r - b.r) + Math.abs(c - b.c));
-    return Math.min(dA, ...dBs);
+    const dists = [];
+    // Area A zone (if preview or active)
+    const zone = state.occAZone;
+    if (zone && zone.r !== null && (zone.phase === 'preview' || zone.phase === 'active')) {
+      for (const cl of occACells(zone.r, zone.c))
+        dists.push(Math.abs(r - cl.r) + Math.abs(c - cl.c));
+    }
+    // Area B points
+    for (const b of state.occB.flatMap(bp => bCells(bp)))
+      dists.push(Math.abs(r - b.r) + Math.abs(c - b.c));
+    return dists.length > 0 ? Math.min(...dists) : 999;
   }
 
   function scoreMove(state, fromLayer, fr, fc, tr, tc) {
@@ -22,8 +29,13 @@ const CpuAI = (() => {
     const after  = distToOcc(state, tr, tc);
     score += (before - after) * 3;
 
-    // Bonus for standing on occupation squares (layer-aware for B points)
-    if (CONFIG.OCC_A.some(a => tr === a.r && tc === a.c)) score += 20;
+    // Bonus for standing on Area A zone cells (active or preview)
+    const zone = state.occAZone;
+    if (zone && zone.r !== null && zone.phase !== 'dormant') {
+      const priority = zone.phase === 'active' ? 25 : 10;
+      if (occACells(zone.r, zone.c).some(cl => tr === cl.r && tc === cl.c)) score += priority;
+    }
+    // Bonus for standing on B point cells (layer-aware)
     if (state.occB.some(bp => bCells(bp).some(b =>
       tr === b.r && tc === b.c && b.layer === fromLayer))) score += 12;
 
@@ -49,8 +61,10 @@ const CpuAI = (() => {
     let score = 10;
     const def = CONFIG.PIECES[target.type];
 
-    // High priority: attack pieces standing on occupation squares
-    if (CONFIG.OCC_A.some(a => tr === a.r && tc === a.c)) score += 30;
+    // High priority: attack pieces on Area A zone or B points
+    const zone2 = state.occAZone;
+    if (zone2?.r !== null && zone2?.phase === 'active' &&
+        occACells(zone2.r, zone2.c).some(cl => tr === cl.r && tc === cl.c)) score += 30;
     if (state.occB.some(bp => bCells(bp).some(b => tr === b.r && tc === b.c))) score += 20;
 
     // Prefer killing low-HP targets (finish them off)
