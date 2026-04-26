@@ -11,9 +11,7 @@ const damageFlash = new Map();
 
 // ── Animation ─────────────────────────────────────────────────────
 const ANIM_DURATION = 500;  // ms
-let animQueue  = [];        // [{pieceId, fromX, fromY, toX, toY}]
-let animStart  = null;
-let animDoneCb = null;
+// (animation state managed inside startAnimation closure)
 
 function easeInOut(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
 
@@ -52,31 +50,36 @@ function buildAnimQueue(snapshot, state) {
   return queue;
 }
 
+// 1駒ずつ順番にアニメーション再生
 function startAnimation(queue, onDone) {
-  animQueue  = queue;
-  animDoneCb = onDone;
-  animStart  = performance.now();
-  requestAnimationFrame(animFrame);
-}
+  if (queue.length === 0) { onDone(); return; }
+  let idx = 0;
 
-function animFrame(ts) {
-  const raw = Math.min(1, (ts - animStart) / ANIM_DURATION);
-  const t   = easeInOut(raw);
-  const posOverrides = new Map();
-  for (const entry of animQueue) {
-    posOverrides.set(entry.pieceId, {
-      x: entry.fromX + (entry.toX - entry.fromX) * t,
-      y: entry.fromY + (entry.toY - entry.fromY) * t,
-    });
+  function playNext() {
+    if (idx >= queue.length) { onDone(); return; }
+    const entry = queue[idx++];
+    const start = performance.now();
+
+    function frame(ts) {
+      const raw = Math.min(1, (ts - start) / ANIM_DURATION);
+      const t   = easeInOut(raw);
+      const posOverrides = new Map();
+      posOverrides.set(entry.pieceId, {
+        x: entry.fromX + (entry.toX - entry.fromX) * t,
+        y: entry.fromY + (entry.toY - entry.fromY) * t,
+      });
+      const activeFlash = damageFlash.size > 0 ? new Set(damageFlash.keys()) : null;
+      Renderer.draw(G, posOverrides, activeFlash);
+      if (raw < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        setTimeout(playNext, 80);
+      }
+    }
+    requestAnimationFrame(frame);
   }
-  const activeFlash = damageFlash.size > 0 ? new Set(damageFlash.keys()) : null;
-  Renderer.draw(G, posOverrides, activeFlash);
-  if (raw < 1) {
-    requestAnimationFrame(animFrame);
-  } else {
-    animQueue = [];
-    if (animDoneCb) { const cb = animDoneCb; animDoneCb = null; cb(); }
-  }
+
+  playNext();
 }
 
 function getSkillName(pieceType) {
@@ -178,7 +181,7 @@ function bindEvents() {
   // Layer transit (auto-queue, no cell click needed)
   document.getElementById('btn-transit').addEventListener('click', () => {
     if (!G.selected) return;
-    if (G.playerActions.length >= 1) { setMessage('すでにアクション設定済みです'); return; }
+    if (G.playerActions.length >= 2) { setMessage('すでに2アクション設定済みです'); return; }
     const { layer, r, c } = G.selected;
     const dest = getTransitDest(G, layer, r, c);
     if (!dest) { setMessage('層移動できません'); return; }
@@ -197,7 +200,7 @@ function bindEvents() {
     setActBtn('btn-transit', { disabled: true });
     setActBtn('btn-skill',   { disabled: true });
     clearInfoPanel();
-    const remaining = 1 - G.playerActions.length;
+    const remaining = 2 - G.playerActions.length;
     setMessage(remaining > 0
       ? `アクション設定済み (残り${remaining}個まで設定可能)`
       : 'アクション設定完了。「ターン確定」を押してください');
@@ -331,7 +334,7 @@ function handleCanvasInteraction(px, py) {
       document.getElementById('btn-confirm').disabled = false;
       selectedHandPiece = null;
       G.actionMode = null; G.validCells = [];
-      const remaining = 1 - G.playerActions.length;
+      const remaining = 2 - G.playerActions.length;
       setMessage(remaining > 0
         ? `アクション設定済み (残り${remaining}個まで設定可能)`
         : 'アクション設定完了。「ターン確定」を押してください');
@@ -523,7 +526,7 @@ function selectPiece(layer, r, c) {
 
 function selectHandPiece(piece) {
   if (G.phase !== 'PLAYER_INPUT') return;
-  if (G.playerActions.length >= 1) { setMessage('すでにアクション設定済みです'); return; }
+  if (G.playerActions.length >= 2) { setMessage('すでに2アクション設定済みです'); return; }
   selectedHandPiece = piece;
   G.selected    = null;
   G.actionMode  = 'DEPLOY';
@@ -631,7 +634,7 @@ function setActionMode(mode) {
 // ── Queue action ──────────────────────────────────────────────────
 function queueAction(tr, tc, tLayer) {
   if (!G.selected || !G.actionMode) return;
-  if (G.playerActions.length >= 1) { setMessage('すでにアクション設定済みです'); return; }
+  if (G.playerActions.length >= 2) { setMessage('すでに2アクション設定済みです'); return; }
 
   const { layer, r, c } = G.selected;
   const piece = getPieceAt(G, layer, r, c);
@@ -671,7 +674,7 @@ function queueAction(tr, tc, tLayer) {
   document.getElementById('mob-terrain-menu').style.display = 'none';
   clearInfoPanel();
 
-  const remaining = 1 - G.playerActions.length;
+  const remaining = 2 - G.playerActions.length;
   setMessage(remaining > 0
     ? `アクション設定済み (残り${remaining}個まで設定可能)`
     : 'アクション設定完了。「ターン確定」を押してください'
@@ -679,7 +682,7 @@ function queueAction(tr, tc, tLayer) {
 }
 
 function queuePass() {
-  if (G.playerActions.length < 1) {
+  if (G.playerActions.length < 2) {
     G.playerActions.push({ owner:'p1', type:'PASS' });
     const idx = G.playerActions.length - 1;
     document.getElementById(`slot-${idx}`).querySelector('.slot-text').textContent = 'パス';

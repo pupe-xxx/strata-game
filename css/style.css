@@ -418,8 +418,6 @@ html, body {
 /* Mobile action section — hidden everywhere by default */
 #mob-action-section { display: none !important; }
 
-/* 1アクション/ターン制のため②スロットは常に非表示 */
-#slot-1 { display: none !important; }
 
 /* ===== GAME OVER ===== */
 #gameover-overlay {
