@@ -651,14 +651,14 @@ html, body {
   /* ターン確定 */
   #btn-confirm { width: 100%; padding: 10px; font-size: 15px; order: 1; }
 
-  /* アクションボタン6個：1列 */
+  /* アクションボタン6個：横1列 */
   #action-btns {
     display: flex !important;
-    flex-direction: column;
-    gap: 5px;
+    flex-direction: row;
+    gap: 4px;
     order: 2;
   }
-  .act-btn { padding: 10px 8px; font-size: 13px; width: 100%; text-align: left; }
+  .act-btn { flex: 1; padding: 10px 2px; font-size: 12px; text-align: center; }
 
   /* 地形・ローラーメニュー */
   #terrain-menu { display: flex; gap: 4px; order: 3; }
