@@ -654,11 +654,19 @@ html, body {
   /* アクションボタン6個：横1列 */
   #action-btns {
     display: flex !important;
-    flex-direction: row;
+    flex-direction: row !important;
+    flex-wrap: nowrap !important;
     gap: 4px;
     order: 2;
   }
-  .act-btn { flex: 1; padding: 10px 2px; font-size: 12px; text-align: center; }
+  #action-btns .act-btn {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    width: auto !important;
+    padding: 10px 2px !important;
+    font-size: 11px !important;
+    text-align: center;
+  }
 
   /* 地形・ローラーメニュー */
   #terrain-menu { display: flex; gap: 4px; order: 3; }
