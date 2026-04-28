@@ -193,6 +193,27 @@ html, body {
 
 #game-canvas { display: block; cursor: pointer; }
 
+/* Layer indicator — PC only, shown above canvas */
+#layer-indicator {
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 3px;
+  padding: 4px 18px;
+  border-radius: 20px;
+  flex-shrink: 0;
+  transition: color .3s, background .3s, border-color .3s;
+}
+#layer-indicator.surface {
+  color: #4fc3f7;
+  border: 1px solid rgba(79,195,247,0.5);
+  background: rgba(79,195,247,0.1);
+}
+#layer-indicator.depth {
+  color: #ba68c8;
+  border: 1px solid rgba(186,104,200,0.5);
+  background: rgba(186,104,200,0.1);
+}
+
 #message-bar {
   padding: 3px 10px;
   background: var(--panel);
@@ -218,7 +239,7 @@ html, body {
 .ctrl-row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
 .ctrl-row-2 { align-items: flex-start; }
 
-#layer-toggle { display: flex; gap: 3px; }
+#layer-toggle { display: none; }  /* PC: スクロールで切り替え、ボタン不要 */
 .layer-btn {
   padding: 4px 10px;
   border: 1px solid var(--border);
@@ -674,6 +695,7 @@ html, body {
 
   /* Compact controls on mobile */
   .ctrl-row  { flex-wrap: wrap; gap: 5px; }
+  #layer-toggle { display: flex; gap: 3px; }  /* モバイル: ボタン復活 */
   .layer-btn { padding: 7px 10px; font-size: 12px; }
   .view-btn  { padding: 7px 8px; font-size: 11px; }
   .slot      { min-width: 80px; font-size: 10px; min-height: 28px; padding: 3px 4px; }

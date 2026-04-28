@@ -141,6 +141,8 @@ function setActBtn(id, opts) {
 function initGame() {
   G = createInitialState();
   generateEchoPoints(G);
+  const ind = document.getElementById('layer-indicator');
+  if (ind) { ind.textContent = '● 表層'; ind.className = 'pc-only surface'; }
   // On mobile, move controls-row to be a direct grid child of game-layout
   // so it gets its own grid row and isn't clipped by board-wrapper overflow.
   if (isMobile()) {
@@ -406,7 +408,12 @@ function setLayer(layer) {
   G.actionMode = null;
   document.getElementById('btn-surface').classList.toggle('active', layer === 'surface');
   document.getElementById('btn-depth')  .classList.toggle('active', layer === 'depth');
-  setMessage(layer === 'surface' ? '表層を表示中' : '深層を表示中');
+  const ind = document.getElementById('layer-indicator');
+  if (ind) {
+    ind.textContent = layer === 'surface' ? '● 表層' : '● 深層';
+    ind.className   = `pc-only ${layer}`;
+  }
+  setMessage(layer === 'surface' ? '表層を表示中（スクロールで切り替え）' : '深層を表示中（スクロールで切り替え）');
 }
 
 // ── Canvas interaction ────────────────────────────────────────────
@@ -444,22 +451,15 @@ function onCanvasRightClick(e) {
   cyclePaintMarker(e.clientX - rect.left, e.clientY - rect.top);
 }
 
-/** 右クリック/長押し：そのヘックスのメモ色を cycling */
+/** 右クリック/長押し：マーカーがあれば即削除、なければ現在色で配置 */
 function cyclePaintMarker(px, py) {
   const cell = Renderer.screenToCell(px, py);
   if (!cell || !isValidCell(cell.r, cell.c)) return;
   const key = `${G.viewLayer},${cell.r},${cell.c}`;
-  const cur = paintMarkers.get(key);
-  if (cur === undefined) {
-    paintMarkers.set(key, currentPaintColor);
+  if (paintMarkers.has(key)) {
+    paintMarkers.delete(key);
   } else {
-    const idx = PAINT_COLORS.indexOf(cur);
-    const next = PAINT_COLORS[(idx + 1) % PAINT_COLORS.length];
-    if (next === PAINT_COLORS[0] && idx === PAINT_COLORS.length - 1) {
-      paintMarkers.delete(key);
-    } else {
-      paintMarkers.set(key, next);
-    }
+    paintMarkers.set(key, currentPaintColor);
   }
   Renderer.setPaintMarkers(paintMarkers);
 }
