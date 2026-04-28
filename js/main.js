@@ -136,14 +136,18 @@ function initGame() {
   G = createInitialState();
   generateEchoPoints(G);
   const ind = document.getElementById('layer-indicator');
-  if (ind) { ind.textContent = '● 表層'; ind.className = 'pc-only surface'; }
+  if (ind) { ind.textContent = '● 表層'; ind.className = 'surface'; }
   // On mobile, move controls-row to be a direct grid child of game-layout
   // so it gets its own grid row and isn't clipped by board-wrapper overflow.
   if (isMobile()) {
-    const ctrl = document.getElementById('controls-row');
+    const ctrl      = document.getElementById('controls-row');
     const gameLayout = document.getElementById('game-layout');
     const infoPanel  = document.getElementById('info-panel');
     gameLayout.insertBefore(ctrl, infoPanel);
+    // occ-section を side-panel に移動（モバイルでは occ-panel が非表示のため）
+    const occSection = document.getElementById('occ-section');
+    const sidePanel  = document.getElementById('side-panel');
+    if (occSection && sidePanel) sidePanel.insertBefore(occSection, sidePanel.firstChild);
   }
   Renderer.init(document.getElementById('game-canvas'));
   Renderer.resize();
@@ -395,7 +399,7 @@ function setLayer(layer) {
   const ind = document.getElementById('layer-indicator');
   if (ind) {
     ind.textContent = layer === 'surface' ? '● 表層' : '● 深層';
-    ind.className   = `pc-only ${layer}`;
+    ind.className   = layer;
   }
   setMessage(layer === 'surface' ? '表層を表示中（スクロールで切り替え）' : '深層を表示中（スクロールで切り替え）');
 }

@@ -52,31 +52,6 @@ html, body {
 #header-info { display: flex; gap: 8px; flex: 1; align-items: center; }
 #turn-display { color: var(--gold); font-size: 12px; flex-shrink: 0; }
 
-/* スマホ：ヘッダー内アクションスロット */
-#mob-slot-status {
-  display: flex;
-  gap: 5px;
-  flex: 1;
-  min-width: 0;
-}
-#mob-slot-status span {
-  flex: 1;
-  font-size: 10px;
-  padding: 2px 5px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-#mob-slot-status span.filled {
-  border-color: var(--accent);
-  color: var(--text);
-}
-
 #game-layout {
   display: flex;
   flex: 1;
@@ -88,9 +63,19 @@ html, body {
 .mobile-only { display: none; }
 .pc-only     { display: block; }
 
-/* ===== LEFT INFO PANEL ===== */
+/* ===== SHARED PANEL BASE ===== */
+.side-col {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* ===== COL 1: 詳細バー ===== */
 #info-panel {
-  width: 185px;
+  width: 160px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -99,7 +84,6 @@ html, body {
   overflow: hidden;
 }
 
-/* Tab buttons — hidden on PC (ID specificity fix: explicitly display:none) */
 #info-tabs {
   display: none;
   flex-shrink: 0;
@@ -121,7 +105,6 @@ html, body {
 .info-tab.active { background: var(--btn-act); color: #fff; }
 .info-tab:hover:not(.active) { background: var(--btn-hover); color: var(--text); }
 
-/* Tab panels */
 .tab-panel {
   flex: 1;
   overflow-y: auto;
@@ -131,7 +114,6 @@ html, body {
   gap: 4px;
 }
 
-/* PC log area */
 #pc-log-area {
   display: flex;
   flex-direction: column;
@@ -154,7 +136,6 @@ html, body {
 .log-entry.log-p2 { color: var(--p2); }
 .log-entry.log-system { color: var(--gold); }
 
-/* Piece info content */
 #info-empty {
   font-size: 11px;
   color: var(--text-dim);
@@ -179,27 +160,27 @@ html, body {
 .skill-value { color: #ffd54f; }
 .trait-value { color: var(--text-dim); font-size: 10px; line-height: 1.5; }
 
-/* ===== BOARD WRAPPER ===== */
-#board-wrapper {
-  flex: 1;
+/* ===== COL 2: 占領UI + 層インジケーター ===== */
+#occ-panel {
+  width: 130px;
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 4px 6px;
-  overflow: hidden;
-  gap: 4px;
-  min-width: 0;
+  gap: 6px;
+  padding: 6px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
 }
 
-#game-canvas { display: block; cursor: pointer; }
-
-/* Layer indicator — PC only, shown above canvas */
+/* Layer indicator in occ-panel */
 #layer-indicator {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: bold;
-  letter-spacing: 3px;
-  padding: 4px 18px;
-  border-radius: 20px;
+  letter-spacing: 2px;
+  padding: 5px 6px;
+  border-radius: var(--radius);
+  text-align: center;
   flex-shrink: 0;
   transition: color .3s, background .3s, border-color .3s;
 }
@@ -214,6 +195,20 @@ html, body {
   background: rgba(186,104,200,0.1);
 }
 
+/* ===== COL 3: 盤 ===== */
+#board-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 4px;
+  overflow: hidden;
+  gap: 4px;
+  min-width: 0;
+}
+
+#game-canvas { display: block; cursor: pointer; }
+
 #message-bar {
   padding: 3px 10px;
   background: var(--panel);
@@ -223,72 +218,90 @@ html, body {
   font-size: 11px;
   min-height: 24px;
   width: 100%;
-  max-width: 760px;
   text-align: center;
+  flex-shrink: 0;
 }
 
-/* ===== CONTROLS ROW ===== */
+/* ===== COL 4: アクションUI ===== */
 #controls-row {
+  width: 185px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.ctrl-row { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+.ctrl-row-1 { display: none; }   /* PC: 不要 */
+
+/* Slots: vertical stack */
+.ctrl-row-confirm {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+#slots {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+.slot {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 10px;
+  min-height: 28px;
   width: 100%;
+  cursor: grab;
+  transition: opacity .15s, border-color .15s;
 }
+.slot.filled { border-color: var(--accent); }
+.slot.drag-over { border-color: var(--gold); background: rgba(255,215,0,.1); }
+.slot.dragging  { opacity: 0.4; }
+.slot-num  { color: var(--text-dim); flex-shrink: 0; padding-top: 1px; }
+.slot-text { flex: 1; color: var(--text); white-space: normal; line-height: 1.3; word-break: break-all; max-height: 2.6em; overflow: hidden; }
+.slot-clear { background: none; border: none; color: var(--p2); cursor: pointer; font-size: 11px; padding: 0 2px; }
 
-.ctrl-row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+#btn-confirm {
+  width: 100%;
+  padding: 8px;
+  background: #1565c0;
+  border: 1px solid #1e88e5;
+  color: #fff;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: bold;
+  transition: all .15s;
+}
+#btn-confirm:disabled { opacity: 0.35; cursor: not-allowed; }
+#btn-confirm:not(:disabled):hover { background: #1976d2; }
 
-/* Row 2: slots + confirm */
-.ctrl-row-confirm { align-items: stretch; }
-.ctrl-row-confirm #slots { flex: 1; display: flex; gap: 4px; }
-.ctrl-row-confirm #btn-confirm { flex-shrink: 0; }
-
-/* Row 3: action buttons (full width) */
+/* Action buttons: 2-col grid */
 .ctrl-row-actions { align-items: flex-start; }
-.ctrl-row-actions #action-inline { flex: 1; }
-
-#layer-toggle { display: none; }  /* PC: スクロールで切り替え、ボタン不要 */
-.ctrl-row-1 { display: none; }   /* PC: 方向ボタンも不要 */
-.layer-btn {
-  padding: 4px 10px;
-  border: 1px solid var(--border);
-  background: var(--btn);
-  color: var(--text-dim);
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 11px;
-  transition: all .15s;
-}
-.layer-btn.active { background: var(--btn-act); color: #fff; border-color: var(--accent); }
-.layer-btn:hover:not(.active) { background: var(--btn-hover); }
-
-#view-dir-btns { display: flex; gap: 3px; }
-.view-btn {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  background: var(--btn);
-  color: var(--text-dim);
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 11px;
-  transition: all .15s;
-}
-.view-btn.active { background: var(--btn-act); color: #fff; border-color: var(--accent); }
-.view-btn:hover:not(.active) { background: var(--btn-hover); }
-
 #action-inline {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  position: relative;
   width: 100%;
 }
-#action-btns { display: flex; gap: 4px; flex-wrap: nowrap; }
-
+#action-btns {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
 .act-btn {
-  padding: 4px 0;
-  width: 50px;
+  padding: 7px 2px;
+  width: auto;
   text-align: center;
   border: 1px solid var(--border);
   background: var(--btn);
@@ -306,17 +319,11 @@ html, body {
 #terrain-menu {
   display: flex;
   gap: 4px;
-  flex-wrap: nowrap;
-  background: transparent;
-  padding: 0;
-  white-space: nowrap;
-}
-.terrain-opt.selected {
-  background: rgba(255,215,0,.25);
-  border-color: var(--gold);
+  flex-wrap: wrap;
 }
 .terrain-opt {
-  padding: 4px 7px;
+  flex: 1;
+  padding: 5px 4px;
   border: 1px solid var(--gold);
   background: transparent;
   color: var(--gold);
@@ -324,82 +331,31 @@ html, body {
   cursor: pointer;
   font-family: var(--font);
   font-size: 11px;
+  text-align: center;
 }
 .terrain-opt:hover { background: rgba(255,215,0,.15); }
-/* paint button: color states */
-.paint-btn[data-color="red"]    { background:#3a1a1a; border-color:#ef5350; color:#ef5350; }
-.paint-btn[data-color="yellow"] { background:#3a3010; border-color:#ffd700; color:#ffd700; }
-.paint-btn[data-color="blue"]   { background:#0d2038; border-color:#4fc3f7; color:#4fc3f7; }
-
-#slots { display: flex; gap: 4px; }
-.slot {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  padding: 3px 5px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-size: 10px;
-  min-height: 26px;
-  min-width: 100px;
-  flex: 1;
-  cursor: grab;
-  transition: opacity .15s, border-color .15s;
+.terrain-opt.selected {
+  background: rgba(255,215,0,.25);
+  border-color: var(--gold);
 }
-.slot.filled { border-color: var(--accent); }
-.slot.drag-over { border-color: var(--gold); background: rgba(255,215,0,.1); }
-.slot.dragging  { opacity: 0.4; }
-.slot-num  { color: var(--text-dim); flex-shrink: 0; padding-top: 1px; }
-.slot-text { flex: 1; color: var(--text); white-space: normal; line-height: 1.3; word-break: break-all; max-height: 2.6em; overflow: hidden; }
-.slot-clear { background: none; border: none; color: var(--p2); cursor: pointer; font-size: 11px; padding: 0 2px; }
 
-#btn-confirm {
-  padding: 5px 12px;
-  background: #1565c0;
-  border: 1px solid #1e88e5;
-  color: #fff;
+#layer-toggle { display: none; }
+#view-dir-btns { display: flex; gap: 3px; }
+.view-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  background: var(--btn);
+  color: var(--text-dim);
   border-radius: var(--radius);
   cursor: pointer;
   font-family: var(--font);
   font-size: 11px;
-  font-weight: bold;
   transition: all .15s;
 }
-#btn-confirm:disabled { opacity: 0.35; cursor: not-allowed; }
-#btn-confirm:not(:disabled):hover { background: #1976d2; }
-#btn-deselect {
-  padding: 5px 8px;
-  background: var(--btn);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 11px;
-}
-#btn-deselect:hover { background: var(--btn-hover); }
 
-.paint-btn {
-  padding: 5px 8px;
-  background: var(--btn);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-family: var(--font);
-  font-size: 11px;
-}
-.paint-btn:hover { background: var(--btn-hover); }
-.paint-btn.active {
-  background: #2e4a2e;
-  border-color: #66bb6a;
-  color: #66bb6a;
-}
-
-/* ===== SIDE PANEL ===== */
+/* ===== COL 5: 駒情報 ===== */
 #side-panel {
-  width: 240px;
+  width: 140px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -408,56 +364,6 @@ html, body {
   background: var(--panel);
   border-left: 1px solid var(--border);
   overflow-y: auto;
-}
-
-/* controls-row in sidebar (PC) */
-#side-panel #controls-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  max-width: none;
-  border-top: 1px solid var(--border);
-  padding-top: 6px;
-  margin-top: 2px;
-}
-/* PC: action buttons full-width grid in sidebar */
-#side-panel #action-btns {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 4px;
-}
-#side-panel .act-btn {
-  width: auto;
-  padding: 6px 2px;
-  font-size: 11px;
-}
-/* sidebar: terrain menu inline */
-#side-panel #terrain-menu {
-  display: flex;
-  gap: 4px;
-  margin-top: 2px;
-}
-#side-panel #terrain-menu .terrain-opt {
-  flex: 1;
-}
-/* sidebar: slots stacked vertically */
-#side-panel #slots {
-  flex-direction: column;
-  gap: 3px;
-}
-#side-panel .slot {
-  min-width: 0;
-  width: 100%;
-}
-/* sidebar: confirm button full width */
-#side-panel .ctrl-row-confirm {
-  flex-direction: column;
-  gap: 4px;
-}
-#side-panel #btn-confirm {
-  width: 100%;
-  padding: 7px;
 }
 
 .section-title {
@@ -509,9 +415,8 @@ html, body {
 }
 
 /* ===== OCCUPATION ===== */
-#occ-section { padding: 5px; border: 1px solid var(--border); border-radius: var(--radius); }
+#occ-section { padding: 4px; border: 1px solid var(--border); border-radius: var(--radius); }
 
-/* Score display */
 .occ-score {
   font-size: 11px;
   font-weight: bold;
@@ -520,29 +425,9 @@ html, body {
   padding: 3px 0;
 }
 
-/* Area A zone status */
-.occ-a-status {
-  font-size: 10px;
-  padding: 3px 5px;
-  border-radius: 3px;
-  margin: 4px 0;
-  text-align: center;
-  border: 1px solid var(--border);
-}
-.occ-a-status.dormant  { color: var(--text-dim); }
-.occ-a-status.preview  { color: var(--gold); border-color: rgba(255,215,0,.4); background: rgba(255,215,0,.08); }
-.occ-a-status.active   { color: var(--gold); border-color: var(--gold); background: rgba(255,215,0,.15); font-weight: bold; }
-.occ-a-status.active.p1 { color: var(--p1); border-color: var(--p1); background: rgba(79,195,247,.12); }
-.occ-a-status.active.p2 { color: var(--p2); border-color: var(--p2); background: rgba(239,83,80,.12); }
 .occ-row     { display: flex; align-items: center; gap: 4px; margin-bottom: 3px; }
 .occ-key     { width: 18px; font-size: 10px; font-weight: bold; flex-shrink: 0; }
-.occ-A-key   { color: var(--gold); }
-.occ-B-key   { color: var(--green); }
-.occ-bar-wrap { flex: 1; height: 7px; background: #0d1117; border-radius: 4px; overflow: hidden; display: flex; }
-.occ-bar  { height: 100%; transition: width .3s; }
-.p1-bar   { background: var(--p1); }
-.p2-bar   { background: var(--p2); }
-.occ-count { font-size: 9px; color: var(--text-dim); width: 32px; text-align: right; flex-shrink: 0; }
+.occ-count   { font-size: 9px; color: var(--text-dim); text-align: right; flex-shrink: 0; }
 .victory-hint { font-size: 9px; color: var(--text-dim); margin-top: 3px; }
 #victory-warn {
   font-size: 9px; color: #ffb74d; margin-top: 4px; padding: 2px 4px;
@@ -550,20 +435,13 @@ html, body {
   border-radius: 3px; line-height: 1.4;
 }
 
-/* ===== DCP ===== */
-#dcp-section {
-  padding: 5px;
-  border: 1px solid #4a3060;
-  border-radius: var(--radius);
-  background: rgba(186,104,200,.05);
-}
-.dcp-row    { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2px; font-size: 9px; }
-.dcp-label  { color: #ba68c8; }
-.dcp-status { font-size: 9px; font-weight: bold; color: #888; }
-
-/* Mobile action section — hidden everywhere by default */
+/* Mobile action section — hidden by default */
 #mob-action-section { display: none !important; }
 
+/* paint button color states */
+.paint-btn[data-color="red"]    { background:#3a1a1a; border-color:#ef5350; color:#ef5350; }
+.paint-btn[data-color="yellow"] { background:#3a3010; border-color:#ffd700; color:#ffd700; }
+.paint-btn[data-color="blue"]   { background:#0d2038; border-color:#4fc3f7; color:#4fc3f7; }
 
 /* ===== GAME OVER ===== */
 #gameover-overlay {
@@ -602,8 +480,7 @@ html, body {
   background: var(--btn); border: 1px solid var(--border); color: var(--text);
   padding: 6px 16px; border-radius: var(--radius); cursor: pointer; font-family: var(--font);
   font-size: 13px; min-width: 44px; min-height: 36px;
-  -webkit-tap-highlight-color: transparent;
-  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
 #log-popup-list {
   flex: 1; overflow-y: auto; padding: 10px 16px 20px;
@@ -622,11 +499,6 @@ html, body {
   .mobile-only { display: block; }
   .pc-only     { display: none !important; }
 
-  /* Grid layout:
-     board (full width, flex 1)
-     controls (full width, auto height) — inserted here by JS
-     left panel | right panel (36vh)
-  */
   #game-layout {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -640,6 +512,9 @@ html, body {
     overflow: hidden;
   }
 
+  /* occ-panel: hidden on mobile (occ-section moved by JS to side-panel) */
+  #occ-panel { display: none !important; }
+
   #board-wrapper {
     grid-area: board;
     padding: 2px 4px;
@@ -649,28 +524,28 @@ html, body {
     align-items: center;
   }
 
-  /* controls-row moved to game-layout level by JS — 2 rows */
+  /* controls-row moved to game-layout by JS */
   #controls-row {
     grid-area: ctrl;
     flex-direction: row;
-    flex-wrap: wrap;       /* ①が行1、残りが行2 */
+    flex-wrap: wrap;
     align-items: center;
     padding: 3px 5px;
     gap: 4px;
-    max-width: none;
-    background: var(--panel);
+    width: auto;
+    border: none;
     border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
+    overflow: visible;
   }
 
-  /* モバイル: ctrl-row-confirm/actions を展開してflexに参加させる */
   .ctrl-row-confirm { display: contents; }
-  .ctrl-row-actions { display: none; }  /* モバイルは mob-action-section を使う */
+  .ctrl-row-actions { display: none; }
 
-  /* 行1: スロット */
   #slots {
     order: 1;
     flex-basis: 100%;
+    flex-direction: row;
     display: flex;
     gap: 4px;
   }
@@ -679,15 +554,16 @@ html, body {
     font-size: 10px;
     min-height: 28px;
     padding: 2px 4px;
+    width: auto;
+    flex: 1;
   }
-  .slot-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .slot-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-height: none; }
 
-  /* 行2: ターン確定 + 層切替ボタン */
-  #btn-confirm  { order: 2; flex-shrink: 0; }
+  #btn-confirm  { order: 2; flex-shrink: 0; width: auto; padding: 7px 10px; font-size: 12px; }
   .ctrl-row-1   { order: 3; flex-shrink: 0; display: flex; gap: 5px; align-items: center; }
+  #layer-toggle { display: flex; gap: 3px; }
   #action-inline { display: none !important; }
 
-  /* Left panel: 2-tab panel */
   #info-panel {
     grid-area: left;
     width: auto;
@@ -695,10 +571,8 @@ html, body {
     border-top: none;
     overflow: hidden;
   }
-  /* Show tab buttons on mobile */
   #info-tabs { display: flex; }
 
-  /* When piece selected on mobile: hide tabs & tab content, show piece info */
   body.piece-selected #info-tabs            { display: none; }
   body.piece-selected #tab-you-panel        { display: none !important; }
   body.piece-selected #tab-cpu-panel        { display: none !important; }
@@ -706,7 +580,6 @@ html, body {
 
   .tab-panel { padding: 5px; }
 
-  /* Right panel: game info ↔ action buttons */
   #side-panel {
     grid-area: right;
     width: auto;
@@ -718,58 +591,29 @@ html, body {
     flex-direction: column;
   }
 
-  /* Right panel: hide PC-only sections on mobile */
   .pc-only { display: none !important; }
 
-  /* Mobile action section — hidden by default, shown when piece selected */
   #mob-action-section { display: none !important; }
-  body.piece-selected #occ-section        { display: none !important; }
-  body.piece-selected #mob-action-section { display: block !important; }
+  body.piece-selected #occ-section         { display: none !important; }
+  body.piece-selected #mob-action-section  { display: block !important; }
 
-  /* Mobile action buttons: 2×3 grid */
   #mob-action-btns {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 5px;
     margin-bottom: 5px;
   }
-  #mob-terrain-menu {
-    display: flex;
-    gap: 4px;
-    margin-top: 4px;
-  }
-  .mob-act {
-    width: auto;
-    padding: 10px 2px;
-    font-size: 11px;
-  }
+  #mob-terrain-menu { display: flex; gap: 4px; margin-top: 4px; }
+  .mob-act { width: auto; padding: 10px 2px; font-size: 11px; }
 
-
-  /* Hide desktop action buttons from controls row on mobile */
   #action-inline  { display: none; }
   #terrain-menu   { display: none !important; }
 
-  /* Compact controls on mobile */
-  .ctrl-row  { flex-wrap: wrap; gap: 5px; }
-  #layer-toggle { display: flex; gap: 3px; }  /* モバイル: ボタン復活 */
-  .ctrl-row-1   { display: flex; }            /* モバイル: ctrl-row-1 復活 */
   .layer-btn { padding: 7px 10px; font-size: 12px; }
-  .view-btn  { padding: 7px 8px; font-size: 11px; }
-  .slot      { min-width: 80px; font-size: 10px; min-height: 28px; padding: 3px 4px; }
-  #btn-confirm { padding: 7px 10px; font-size: 12px; }
-  #btn-deselect { padding: 7px 8px; }
-
-  /* Log popup button in header */
   #btn-log-popup {
-    padding: 5px 12px;
-    background: var(--btn);
-    border: 1px solid var(--border);
-    color: var(--text-dim);
-    border-radius: var(--radius);
-    cursor: pointer;
-    font-family: var(--font);
-    font-size: 11px;
-    touch-action: manipulation;
+    padding: 5px 12px; background: var(--btn); border: 1px solid var(--border);
+    color: var(--text-dim); border-radius: var(--radius); cursor: pointer;
+    font-family: var(--font); font-size: 11px; touch-action: manipulation;
   }
 
   #gameover-box   { padding: 24px 20px; }

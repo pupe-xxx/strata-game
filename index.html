@@ -19,16 +19,12 @@
 
     <div id="game-layout">
 
-      <!-- ===== LEFT PANEL (PC: log/piece-info | Mobile: 3-tab) ===== -->
+      <!-- ===== COL 1: 詳細バー (PC: log + piece info | Mobile: tabs) ===== -->
       <aside id="info-panel">
-
-        <!-- Mobile tab buttons (2 tabs only) -->
         <div id="info-tabs" class="mobile-only">
           <button class="info-tab active" data-tab="you">あなた</button>
           <button class="info-tab" data-tab="cpu">相手</button>
         </div>
-
-        <!-- Tab: あなた / PC: ログ -->
         <div id="tab-you-panel" class="tab-panel">
           <div id="pc-log-area" class="pc-only">
             <div class="section-title">ログ</div>
@@ -39,14 +35,10 @@
             <div class="hand-area" id="mob-p1-hand"></div>
           </div>
         </div>
-
-        <!-- Tab: 相手 (mobile only) -->
         <div id="tab-cpu-panel" class="tab-panel" style="display:none">
           <div class="piece-list" id="mob-p2-pieces"></div>
           <div class="hand-area" id="mob-p2-hand"></div>
         </div>
-
-        <!-- Tab: 選択中 / PC: 駒詳細 -->
         <div id="tab-selected-panel" class="tab-panel" style="display:none">
           <div id="info-empty">駒をクリックすると<br>詳細が表示されます</div>
           <div id="info-content" style="display:none">
@@ -68,35 +60,18 @@
             <div id="info-trait" class="info-value trait-value"></div>
           </div>
         </div>
-
       </aside>
 
-      <!-- ===== BOARD ONLY ===== -->
-      <div id="board-wrapper">
-        <div id="layer-indicator" class="surface pc-only">● 表層</div>
-        <canvas id="game-canvas"></canvas>
-        <div id="message-bar">駒を選択してください</div>
-      </div>
+      <!-- ===== COL 2: 占領UI + 層インジケーター (PC only) ===== -->
+      <aside id="occ-panel" class="pc-only">
+        <!-- 層インジケーター -->
+        <div id="layer-indicator" class="surface">● 表層</div>
 
-      <!-- ===== SIDE PANEL ===== -->
-      <aside id="side-panel">
-
-        <!-- CPU status (PC only) -->
-        <section class="player-section pc-only" id="p2-section">
-          <div class="player-label cpu-label">CPU</div>
-          <div class="hand-area" id="p2-hand"></div>
-          <div class="piece-list" id="p2-pieces"></div>
-        </section>
-
-        <!-- Occupation counters -->
+        <!-- 占領状況 -->
         <section id="occ-section">
           <div class="section-title">占領状況</div>
-
-          <!-- スコア -->
           <div id="occ-score-display" class="occ-score">あなた 0pt  /  CPU 0pt</div>
           <div class="victory-hint">先取 <b>5点</b> 勝利 / 30T上限</div>
-
-          <!-- Echo Points -->
           <div style="margin-top:8px; font-size:0.75rem; color:#26c6da; font-weight:bold;">エコーポイント</div>
           <div class="occ-row" style="margin-top:4px">
             <span class="occ-key" style="color:#26c6da">E表</span>
@@ -110,51 +85,65 @@
           <div class="victory-hint" id="echo-cycle-timer">サイクル残: 10T</div>
           <div id="victory-warn" style="display:none"></div>
         </section>
+      </aside>
 
-        <!-- Action UI (PC: sidebar / Mobile: JS が game-layout に移動) -->
-        <div id="controls-row">
-          <!-- Row 1: layer toggle (mobile only) -->
-          <div class="ctrl-row ctrl-row-1">
-            <div id="layer-toggle">
-              <button id="btn-surface" class="layer-btn active">表層</button>
-              <button id="btn-depth"   class="layer-btn">深層</button>
-            </div>
-          </div>
+      <!-- ===== COL 3: 盤 ===== -->
+      <div id="board-wrapper">
+        <canvas id="game-canvas"></canvas>
+        <div id="message-bar">駒を選択してください</div>
+      </div>
 
-          <!-- Row 2: slots + confirm -->
-          <div class="ctrl-row ctrl-row-confirm">
-            <div id="slots">
-              <div class="slot" id="slot-0" draggable="true"><span class="slot-num">①</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="0" style="display:none">✕</button></div>
-              <div class="slot" id="slot-1" draggable="true"><span class="slot-num">②</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="1" style="display:none">✕</button></div>
-            </div>
-            <button id="btn-confirm" disabled>ターン確定</button>
-          </div>
-
-          <!-- Row 3: action buttons -->
-          <div class="ctrl-row ctrl-row-actions">
-            <div id="action-inline">
-              <div id="action-btns">
-                <button class="act-btn" id="btn-terrain"     disabled>地形</button>
-                <button class="act-btn" id="btn-transit"     disabled>層移動</button>
-                <button class="act-btn" id="btn-skill"       disabled>スキル</button>
-                <button class="act-btn" id="btn-vine"        disabled>🌿蔦</button>
-                <button class="act-btn" id="btn-react"       disabled>⚡反応</button>
-                <button class="act-btn" id="btn-pass-action">パス</button>
-              </div>
-              <div id="terrain-menu" style="display:none">
-                <button class="terrain-opt" data-dir="up" id="btn-terrain-up">凸（壁）</button>
-                <button class="terrain-opt" data-dir="down" id="btn-terrain-down">凹（穴）</button>
-              </div>
-              <div id="roller-menu" style="display:none">
-                <button class="roller-opt" data-rtype="LIGHT">🛞軽(2T)</button>
-                <button class="roller-opt" data-rtype="HEAVY">🛞重(3T)</button>
-                <button id="btn-roller-cancel">×</button>
-              </div>
-            </div>
+      <!-- ===== COL 4: アクションUI (PC: inline column | Mobile: JS が grid に移動) ===== -->
+      <div id="controls-row">
+        <!-- Row 1: layer toggle (mobile only) -->
+        <div class="ctrl-row ctrl-row-1">
+          <div id="layer-toggle">
+            <button id="btn-surface" class="layer-btn active">表層</button>
+            <button id="btn-depth"   class="layer-btn">深層</button>
           </div>
         </div>
 
-        <!-- Player 1 status (PC only) -->
+        <!-- Row 2: slots + confirm -->
+        <div class="ctrl-row ctrl-row-confirm">
+          <div id="slots">
+            <div class="slot" id="slot-0" draggable="true"><span class="slot-num">①</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="0" style="display:none">✕</button></div>
+            <div class="slot" id="slot-1" draggable="true"><span class="slot-num">②</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="1" style="display:none">✕</button></div>
+          </div>
+          <button id="btn-confirm" disabled>ターン確定</button>
+        </div>
+
+        <!-- Row 3: action buttons -->
+        <div class="ctrl-row ctrl-row-actions">
+          <div id="action-inline">
+            <div id="action-btns">
+              <button class="act-btn" id="btn-terrain"     disabled>地形</button>
+              <button class="act-btn" id="btn-transit"     disabled>層移動</button>
+              <button class="act-btn" id="btn-skill"       disabled>スキル</button>
+              <button class="act-btn" id="btn-vine"        disabled>🌿蔦</button>
+              <button class="act-btn" id="btn-react"       disabled>⚡反応</button>
+              <button class="act-btn" id="btn-pass-action">パス</button>
+            </div>
+            <div id="terrain-menu" style="display:none">
+              <button class="terrain-opt" data-dir="up"   id="btn-terrain-up">凸（壁）</button>
+              <button class="terrain-opt" data-dir="down" id="btn-terrain-down">凹（穴）</button>
+            </div>
+            <div id="roller-menu" style="display:none">
+              <button class="roller-opt" data-rtype="LIGHT">🛞軽(2T)</button>
+              <button class="roller-opt" data-rtype="HEAVY">🛞重(3T)</button>
+              <button id="btn-roller-cancel">×</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== COL 5: 駒情報 (PC only) ===== -->
+      <aside id="side-panel">
+        <section class="player-section pc-only" id="p2-section">
+          <div class="player-label cpu-label">CPU</div>
+          <div class="hand-area" id="p2-hand"></div>
+          <div class="piece-list" id="p2-pieces"></div>
+        </section>
+
         <section class="player-section pc-only" id="p1-section">
           <div class="player-label you-label">あなた</div>
           <div class="piece-list" id="p1-pieces"></div>
@@ -172,12 +161,12 @@
             <button class="act-btn mob-act" id="mob-btn-pass">パス</button>
           </div>
           <div id="mob-terrain-menu" style="display:none">
-            <button class="terrain-opt" data-mob-dir="up" id="mob-btn-terrain-up">凸（壁）</button>
+            <button class="terrain-opt" data-mob-dir="up"   id="mob-btn-terrain-up">凸（壁）</button>
             <button class="terrain-opt" data-mob-dir="down" id="mob-btn-terrain-down">凹（穴）</button>
           </div>
         </section>
-
       </aside>
+
     </div>
 
     <!-- Game Over overlay -->

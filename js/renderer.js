@@ -30,12 +30,13 @@ const Renderer = (() => {
   // ── Resize ───────────────────────────────────────────────────────
   function resize() {
     const isMobile = window.innerWidth <= 700;
-    const sideW    = isMobile ? 0 : 185 + 240 + 24;  // left:185 + right:240 + borders
+    // PC: info(160) + occ(130) + action(185) + pieces(140) + borders(~6) = 621
+    const sideW    = isMobile ? 0 : 160 + 130 + 185 + 140 + 6;
     const headerH  = isMobile ? 44 : 52;
-    // PC: controls-row は sidebar へ移動 → board-wrapper は indicator(30) + msg(32) + gap/pad(20)
+    // PC: board-wrapper has only canvas + message-bar(28) + gaps(16)
     const reserveH = isMobile
       ? Math.round(window.innerHeight * 0.36) + 44
-      : 82;
+      : 52;
     const availW = window.innerWidth  - sideW - (isMobile ? 8 : 16);
     const availH = window.innerHeight - headerH - reserveH;
     const scaleW = availW  / CONFIG.CANVAS_W;
