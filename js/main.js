@@ -273,12 +273,6 @@ function bindEvents() {
   document.querySelectorAll('.terrain-opt[data-dir]').forEach(btn => {
     btn.addEventListener('click', () => applyTerrainDir(btn.dataset.dir));
   });
-  document.getElementById('btn-terrain-cancel').addEventListener('click', () => {
-    document.getElementById('terrain-menu').style.display = 'none';
-    G.actionMode = null;
-    G.terrainDir = null;
-    G.validCells = [];
-  });
 
   // Slot clear buttons
   document.querySelectorAll('.slot-clear').forEach(btn => {
