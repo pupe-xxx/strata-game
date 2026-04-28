@@ -30,18 +30,31 @@ const Renderer = (() => {
   // ── Resize ───────────────────────────────────────────────────────
   function resize() {
     const isMobile = window.innerWidth <= 700;
-    // PC: info(160) + occ(130) + action(185) + pieces(140) + borders(~6) = 621
-    const sideW    = isMobile ? 0 : 160 + 130 + 185 + 140 + 6;
-    const headerH  = isMobile ? 44 : 52;
-    // PC: board-wrapper has only canvas + message-bar(28) + gaps(16)
-    const reserveH = isMobile
-      ? Math.round(window.innerHeight * 0.36) + 44
-      : 52;
-    const availW = window.innerWidth  - sideW - (isMobile ? 8 : 16);
-    const availH = window.innerHeight - headerH - reserveH;
+    const boardWrapper = document.getElementById('board-wrapper');
+    let availW, availH;
+
+    if (boardWrapper) {
+      const rect = boardWrapper.getBoundingClientRect();
+      availW = rect.width;
+      availH = rect.height;
+      // Mobile: board-wrapper は盤専用（message-bar非表示）のためそのまま使用
+    }
+
+    // Fallback: 未レイアウト時
+    if (!availW || !availH) {
+      if (isMobile) {
+        availW = window.innerWidth - 8;
+        availH = window.innerHeight - 44 - Math.round(window.innerHeight * 0.36) - 44;
+      } else {
+        // info(288) + side(240) + borders(6) = 534
+        availW = window.innerWidth  - 534;
+        availH = window.innerHeight - 52;
+      }
+    }
+
     const scaleW = availW  / CONFIG.CANVAS_W;
     const scaleH = availH  / CONFIG.CANVAS_H;
-    scale        = Math.max(0.28, Math.min(scaleW, scaleH, 2.5));  // 上限を2.5に拡大
+    scale        = Math.max(0.28, Math.min(scaleW, scaleH, 2.5));
     canvas.width  = Math.round(CONFIG.CANVAS_W * scale);
     canvas.height = Math.round(CONFIG.CANVAS_H * scale);
     HEX = CONFIG.HEX_SIZE * scale;

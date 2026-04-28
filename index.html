@@ -19,7 +19,7 @@
 
     <div id="game-layout">
 
-      <!-- ===== COL 1: 詳細バー (PC: log + piece info | Mobile: tabs) ===== -->
+      <!-- ===== COL 1: 詳細バー ===== -->
       <aside id="info-panel">
         <div id="info-tabs" class="mobile-only">
           <button class="info-tab active" data-tab="you">あなた</button>
@@ -62,81 +62,84 @@
         </div>
       </aside>
 
-      <!-- ===== COL 2: 占領UI + 層インジケーター (PC only) ===== -->
-      <aside id="occ-panel" class="pc-only">
-        <!-- 層インジケーター -->
-        <div id="layer-indicator" class="surface">● 表層</div>
-
-        <!-- 占領状況 -->
-        <section id="occ-section">
-          <div class="section-title">占領状況</div>
-          <div id="occ-score-display" class="occ-score">あなた 0pt  /  CPU 0pt</div>
-          <div class="victory-hint">先取 <b>5点</b> 勝利 / 30T上限</div>
-          <div style="margin-top:8px; font-size:0.75rem; color:#26c6da; font-weight:bold;">エコーポイント</div>
-          <div class="occ-row" style="margin-top:4px">
-            <span class="occ-key" style="color:#26c6da">E表</span>
-            <span class="occ-count" id="echo-surface-count" style="margin-left:auto">—</span>
-          </div>
-          <div class="occ-row">
-            <span class="occ-key" style="color:#26c6da">E深</span>
-            <span class="occ-count" id="echo-depth-count" style="margin-left:auto">—</span>
-          </div>
-          <div class="victory-hint" id="echo-hold-timer">保持: 0/3T</div>
-          <div class="victory-hint" id="echo-cycle-timer">サイクル残: 10T</div>
-          <div id="victory-warn" style="display:none"></div>
-        </section>
-      </aside>
-
-      <!-- ===== COL 3: 盤 ===== -->
+      <!-- ===== COL 2: 盤エリア ===== -->
       <div id="board-wrapper">
-        <canvas id="game-canvas"></canvas>
-        <div id="message-bar">駒を選択してください</div>
-      </div>
 
-      <!-- ===== COL 4: アクションUI (PC: inline column | Mobile: JS が grid に移動) ===== -->
-      <div id="controls-row">
-        <!-- Row 1: layer toggle (mobile only) -->
-        <div class="ctrl-row ctrl-row-1">
-          <div id="layer-toggle">
+        <!-- 占領UI HUD (PC only / position:absolute) -->
+        <div id="occ-float" class="pc-only">
+          <div id="layer-indicator" class="surface">● 表層</div>
+          <section id="occ-section">
+            <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+              <div class="section-title" style="margin-bottom:0; border:none; padding:0;">占領状況</div>
+              <div class="victory-hint" style="margin:0;">先取 <b>5点</b> / 30T上限</div>
+            </div>
+            <div id="occ-score-display" class="occ-score">あなた 0pt  /  CPU 0pt</div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:6px;">
+              <div>
+                <div style="font-size:0.7rem; color:#26c6da; font-weight:bold; margin-bottom:3px;">エコーポイント</div>
+                <div class="occ-row">
+                  <span class="occ-key" style="color:#26c6da">E表</span>
+                  <span class="occ-count" id="echo-surface-count" style="margin-left:auto">—</span>
+                </div>
+                <div class="occ-row">
+                  <span class="occ-key" style="color:#26c6da">E深</span>
+                  <span class="occ-count" id="echo-depth-count" style="margin-left:auto">—</span>
+                </div>
+              </div>
+              <div>
+                <div style="font-size:0.7rem; color:var(--text-dim); margin-bottom:3px;">タイマー</div>
+                <div class="victory-hint" id="echo-hold-timer">保持: 0/3T</div>
+                <div class="victory-hint" id="echo-cycle-timer">サイクル残: 10T</div>
+              </div>
+            </div>
+            <div id="victory-warn" style="display:none"></div>
+          </section>
+        </div>
+
+        <!-- キャンバス（中央配置） -->
+        <canvas id="game-canvas"></canvas>
+
+        <!-- アクションUI HUD (PC: position:absolute / Mobile: JSでctrl領域へ移動) -->
+        <div id="action-float">
+          <!-- メッセージバー（action-float先頭） -->
+          <div id="message-bar">駒を選択してください</div>
+          <!-- 層切り替え (mobile only) -->
+          <div id="layer-toggle" class="mobile-only">
             <button id="btn-surface" class="layer-btn active">表層</button>
             <button id="btn-depth"   class="layer-btn">深層</button>
           </div>
-        </div>
 
-        <!-- Row 2: slots + confirm -->
-        <div class="ctrl-row ctrl-row-confirm">
+          <!-- スロット + ターン確定 -->
           <div id="slots">
             <div class="slot" id="slot-0" draggable="true"><span class="slot-num">①</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="0" style="display:none">✕</button></div>
             <div class="slot" id="slot-1" draggable="true"><span class="slot-num">②</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="1" style="display:none">✕</button></div>
           </div>
           <button id="btn-confirm" disabled>ターン確定</button>
-        </div>
 
-        <!-- Row 3: action buttons -->
-        <div class="ctrl-row ctrl-row-actions">
-          <div id="action-inline">
-            <div id="action-btns">
-              <button class="act-btn" id="btn-terrain"     disabled>地形</button>
-              <button class="act-btn" id="btn-transit"     disabled>層移動</button>
-              <button class="act-btn" id="btn-skill"       disabled>スキル</button>
-              <button class="act-btn" id="btn-vine"        disabled>🌿蔦</button>
-              <button class="act-btn" id="btn-react"       disabled>⚡反応</button>
-              <button class="act-btn" id="btn-pass-action">パス</button>
-            </div>
-            <div id="terrain-menu" style="display:none">
-              <button class="terrain-opt" data-dir="up"   id="btn-terrain-up">凸（壁）</button>
-              <button class="terrain-opt" data-dir="down" id="btn-terrain-down">凹（穴）</button>
-            </div>
-            <div id="roller-menu" style="display:none">
-              <button class="roller-opt" data-rtype="LIGHT">🛞軽(2T)</button>
-              <button class="roller-opt" data-rtype="HEAVY">🛞重(3T)</button>
-              <button id="btn-roller-cancel">×</button>
-            </div>
+          <!-- アクションボタン (PC: 3列×2行 / Mobile: 非表示) -->
+          <div id="action-btns">
+            <button class="act-btn" id="btn-terrain"     disabled>地形</button>
+            <button class="act-btn" id="btn-transit"     disabled>層移動</button>
+            <button class="act-btn" id="btn-skill"       disabled>スキル</button>
+            <button class="act-btn" id="btn-vine"        disabled>🌿蔦</button>
+            <button class="act-btn" id="btn-react"       disabled>⚡反応</button>
+            <button class="act-btn" id="btn-pass-action">パス</button>
+          </div>
+
+          <div id="terrain-menu" style="display:none">
+            <button class="terrain-opt" data-dir="up"   id="btn-terrain-up">凸（壁）</button>
+            <button class="terrain-opt" data-dir="down" id="btn-terrain-down">凹（穴）</button>
+          </div>
+          <div id="roller-menu" style="display:none">
+            <button class="roller-opt" data-rtype="LIGHT">🛞軽(2T)</button>
+            <button class="roller-opt" data-rtype="HEAVY">🛞重(3T)</button>
+            <button id="btn-roller-cancel">×</button>
           </div>
         </div>
+
       </div>
 
-      <!-- ===== COL 5: 駒情報 (PC only) ===== -->
+      <!-- ===== COL 3: 駒情報 ===== -->
       <aside id="side-panel">
         <section class="player-section pc-only" id="p2-section">
           <div class="player-label cpu-label">CPU</div>

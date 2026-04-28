@@ -137,14 +137,13 @@ function initGame() {
   generateEchoPoints(G);
   const ind = document.getElementById('layer-indicator');
   if (ind) { ind.textContent = '● 表層'; ind.className = 'surface'; }
-  // On mobile, move controls-row to be a direct grid child of game-layout
-  // so it gets its own grid row and isn't clipped by board-wrapper overflow.
   if (isMobile()) {
-    const ctrl      = document.getElementById('controls-row');
-    const gameLayout = document.getElementById('game-layout');
-    const infoPanel  = document.getElementById('info-panel');
-    gameLayout.insertBefore(ctrl, infoPanel);
-    // occ-section を side-panel に移動（モバイルでは occ-panel が非表示のため）
+    // action-float を game-layout の ctrl 領域へ移動
+    const actionFloat = document.getElementById('action-float');
+    const gameLayout  = document.getElementById('game-layout');
+    const infoPanel   = document.getElementById('info-panel');
+    if (actionFloat && gameLayout) gameLayout.insertBefore(actionFloat, infoPanel);
+    // occ-section を side-panel に移動（occ-float は pc-only で非表示のため）
     const occSection = document.getElementById('occ-section');
     const sidePanel  = document.getElementById('side-panel');
     if (occSection && sidePanel) sidePanel.insertBefore(occSection, sidePanel.firstChild);
@@ -209,7 +208,7 @@ function bindEvents() {
   if (boardWrapper) {
     boardWrapper.addEventListener('touchend', e => {
       // キャンバス・ボタン類をタップした場合は無視
-      if (e.target === canvas || e.target.closest('button, .act-btn, #controls-row')) return;
+      if (e.target === canvas || e.target.closest('button, .act-btn, #action-float')) return;
       if (_dtTimer) {
         clearTimeout(_dtTimer);
         _dtTimer = null;
