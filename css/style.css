@@ -240,6 +240,7 @@ html, body {
 .ctrl-row-2 { align-items: flex-start; }
 
 #layer-toggle { display: none; }  /* PC: スクロールで切り替え、ボタン不要 */
+.ctrl-row-1 { display: none; }   /* PC: 方向ボタンも不要 */
 .layer-btn {
   padding: 4px 10px;
   border: 1px solid var(--border);
@@ -344,7 +345,7 @@ html, body {
 .slot.drag-over { border-color: var(--gold); background: rgba(255,215,0,.1); }
 .slot.dragging  { opacity: 0.4; }
 .slot-num  { color: var(--text-dim); flex-shrink: 0; padding-top: 1px; }
-.slot-text { flex: 1; color: var(--text); white-space: normal; line-height: 1.4; word-break: break-all; }
+.slot-text { flex: 1; color: var(--text); white-space: normal; line-height: 1.3; word-break: break-all; max-height: 2.6em; overflow: hidden; }
 .slot-clear { background: none; border: none; color: var(--p2); cursor: pointer; font-size: 11px; padding: 0 2px; }
 
 #confirm-area { display: flex; gap: 4px; }
@@ -696,6 +697,7 @@ html, body {
   /* Compact controls on mobile */
   .ctrl-row  { flex-wrap: wrap; gap: 5px; }
   #layer-toggle { display: flex; gap: 3px; }  /* モバイル: ボタン復活 */
+  .ctrl-row-1   { display: flex; }            /* モバイル: ctrl-row-1 復活 */
   .layer-btn { padding: 7px 10px; font-size: 12px; }
   .view-btn  { padding: 7px 8px; font-size: 11px; }
   .slot      { min-width: 80px; font-size: 10px; min-height: 28px; padding: 3px 4px; }

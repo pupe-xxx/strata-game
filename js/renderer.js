@@ -32,9 +32,10 @@ const Renderer = (() => {
     const isMobile = window.innerWidth <= 700;
     const sideW    = isMobile ? 0 : 185 + 195 + 24;
     const headerH  = isMobile ? 44 : 52;
+    // PC: layer-indicator(30) + message-bar(32) + controls-row(≈150) + gaps/padding(20) = 232
     const reserveH = isMobile
       ? Math.round(window.innerHeight * 0.36) + 44
-      : 80;
+      : 232;
     const availW = window.innerWidth  - sideW - (isMobile ? 8 : 16);
     const availH = window.innerHeight - headerH - reserveH;
     const scaleW = availW  / CONFIG.CANVAS_W;

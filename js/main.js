@@ -200,8 +200,8 @@ function bindEvents() {
   document.getElementById('btn-surface').addEventListener('click', () => setLayer('surface'));
   document.getElementById('btn-depth').addEventListener('click',   () => setLayer('depth'));
 
-  // PC: mouse scroll on canvas → layer switch (up=surface, down=depth)
-  canvas.addEventListener('wheel', e => {
+  // PC: mouse scroll on board-wrapper (canvas含む余白全体) → layer switch
+  document.getElementById('board-wrapper').addEventListener('wheel', e => {
     e.preventDefault();
     if (e.deltaY < 0) setLayer('surface');
     else              setLayer('depth');
@@ -451,15 +451,22 @@ function onCanvasRightClick(e) {
   cyclePaintMarker(e.clientX - rect.left, e.clientY - rect.top);
 }
 
-/** 右クリック/長押し：マーカーがあれば即削除、なければ現在色で配置 */
+/** 右クリック/長押し：
+ *  マーカーなし → 現在色で配置
+ *  マーカーあり → 次の色にサイクル（赤→黄→青→削除） */
 function cyclePaintMarker(px, py) {
   const cell = Renderer.screenToCell(px, py);
   if (!cell || !isValidCell(cell.r, cell.c)) return;
   const key = `${G.viewLayer},${cell.r},${cell.c}`;
-  if (paintMarkers.has(key)) {
-    paintMarkers.delete(key);
-  } else {
+  const cur = paintMarkers.get(key);
+  if (cur === undefined) {
+    // マーカーなし → 現在選択色で配置
     paintMarkers.set(key, currentPaintColor);
+  } else {
+    const idx  = PAINT_COLORS.indexOf(cur);
+    const next = idx >= PAINT_COLORS.length - 1 ? null : PAINT_COLORS[idx + 1];
+    if (next === null) paintMarkers.delete(key);
+    else               paintMarkers.set(key, next);
   }
   Renderer.setPaintMarkers(paintMarkers);
 }
