@@ -1150,24 +1150,6 @@ function updateUI() {
   const scoreEl = document.getElementById('occ-score-display');
   if (scoreEl) scoreEl.textContent = `あなた ${s1}pt  /  CPU ${s2}pt`;
 
-  // ── Area Aゾーン状態 ───────────────────────────────────────────
-  const zone = G.occAZone;
-  const zoneEl = document.getElementById('occ-A-status');
-  if (zoneEl && zone) {
-    if (zone.phase === 'dormant') {
-      zoneEl.textContent = `休止中 (${zone.timer}T後に予告)`;
-      zoneEl.className = 'occ-a-status dormant';
-    } else if (zone.phase === 'preview') {
-      zoneEl.textContent = `★ 予告！ ${zone.timer}T後に出現`;
-      zoneEl.className = 'occ-a-status preview';
-    } else if (zone.phase === 'active') {
-      const ctrl = G.occMeta?.A;
-      const who  = ctrl === 'p1' ? 'あなたが制圧中' : ctrl === 'p2' ? 'CPUが制圧中' : '未制圧';
-      zoneEl.textContent = `★ 占領チャンス！ 残り${zone.timer}T  ${who}`;
-      zoneEl.className = `occ-a-status active ${ctrl ?? ''}`;
-    }
-  }
-
   // ── エコーポイント状態 ──────────────────────────────────────────
   const ep = G.echoPoint;
   const epSEl = document.getElementById('echo-surface-count');
@@ -1177,16 +1159,24 @@ function updateUI() {
   if (ep?.active) {
     const sc = G.occMeta?.echoSurface;
     const dc = G.occMeta?.echoDepth;
-    if (epSEl) {
-      epSEl.textContent = sc === 'p1' ? 'あなた' : sc === 'p2' ? 'CPU' : '—';
-      epSEl.style.color = sc === 'p1' ? '#4fc3f7' : sc === 'p2' ? '#ef5350' : '#888';
+    const ctrlLabel = v => v === 'p1' ? 'あなた' : v === 'p2' ? 'CPU' : v === 'contested' ? '⚡拮抗' : '空き';
+    const ctrlColor = v => v === 'p1' ? '#4fc3f7' : v === 'p2' ? '#ef5350' : v === 'contested' ? '#ff9800' : '#888';
+    if (epSEl) { epSEl.textContent = ctrlLabel(sc); epSEl.style.color = ctrlColor(sc); }
+    if (epDEl) { epDEl.textContent = ctrlLabel(dc); epDEl.style.color = ctrlColor(dc); }
+    if (epHEl) {
+      const nxt = ep.nextScoreAt;
+      epHEl.textContent = ep.holdOwner
+        ? `保持: ${ep.holdTimer}/${nxt}T`
+        : '保持: 未占領';
     }
-    if (epDEl) {
-      epDEl.textContent = dc === 'p1' ? 'あなた' : dc === 'p2' ? 'CPU' : '—';
-      epDEl.style.color = dc === 'p1' ? '#4fc3f7' : dc === 'p2' ? '#ef5350' : '#888';
-    }
-    if (epHEl) epHEl.textContent = `保持: ${ep.holdTimer}/${CONFIG.ECHO_HOLD_TURNS}T`;
     if (epCEl) epCEl.textContent = ep.cycleExpired ? 'サイクル: 延長中' : `サイクル残: ${ep.cycleTimer}T`;
+  }
+
+  // ── ターン表示更新 ─────────────────────────────────────────────
+  const turnEl = document.getElementById('turn-display');
+  if (turnEl) {
+    const wave = Math.ceil(G.turn / 10);
+    turnEl.textContent = `ターン ${G.turn} / Wave ${Math.min(wave, 3)}`;
   }
 
   // ── 勝利警告 ───────────────────────────────────────────────────
@@ -1195,7 +1185,8 @@ function updateUI() {
     const msgs = [];
     if (s1 >= CONFIG.WIN_SCORE - 1) msgs.push('★ あと1点で勝利！');
     if (s2 >= CONFIG.WIN_SCORE - 1) msgs.push('⚠ CPUあと1点！');
-    if (zone?.phase === 'active' && zone.timer <= 2) msgs.push(`★ Aゾーン判定まで${zone.timer}T!`);
+    const rem = CONFIG.MAX_TURNS - G.turn;
+    if (rem <= 5 && rem > 0) msgs.push(`⏰ 残り${rem}T`);
     warnEl.textContent = msgs.join(' / ');
     warnEl.style.display = msgs.length > 0 ? 'block' : 'none';
   }
@@ -1283,11 +1274,15 @@ function showGameOver(winner) {
   if (winner === 'p1') {
     title.textContent = 'VICTORY';
     title.style.color = '#4fc3f7';
-    msg.textContent   = 'あなたの勝利です！占領目標を達成しました。';
-  } else {
+    msg.textContent   = `あなたの勝利！ (${G.occScore.p1}pts vs CPU ${G.occScore.p2}pts)`;
+  } else if (winner === 'p2') {
     title.textContent = 'DEFEAT';
     title.style.color = '#ef5350';
-    msg.textContent   = 'CPUの勝利です。再挑戦しますか？';
+    msg.textContent   = `CPUの勝利。(CPU ${G.occScore.p2}pts vs あなた ${G.occScore.p1}pts)`;
+  } else {
+    title.textContent = 'DRAW';
+    title.style.color = '#ffd700';
+    msg.textContent   = `30T終了 — 同点 (${G.occScore.p1}pts)`;
   }
   overlay.style.display = 'flex';
 }

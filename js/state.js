@@ -74,30 +74,23 @@ function createInitialState() {
 
     damagedThisTurn: [],
 
-    // ── New Area A scoring system ─────────────────────────────
-    // phase: 'dormant' | 'preview' | 'active'
-    occAZone: {
-      phase: 'dormant',
-      r: null, c: null,     // top-left of 2×2 zone (null when dormant)
-      timer: CONFIG.OCC_A_DORMANT_TURNS,
-    },
-    occScore: { p1: 0, p2: 0 },  // first to WIN_SCORE wins
+    occScore: { p1: 0, p2: 0 },
 
     // ── Echo Points (エコーポイント) ──────────────────────────
     echoPoint: {
       active:       false,
-      surfaceR:     null, surfaceC: null,
+      surfaceR:     null, surfaceC: null,   // zone center
       depthR:       null, depthC:   null,
       cycleTimer:   CONFIG.ECHO_CYCLE_TURNS,
       cycleExpired: false,
       holdTimer:    0,
       holdOwner:    null,
+      nextScoreAt:  CONFIG.ECHO_HOLD_TURNS, // holdTimer threshold for next score
     },
 
     // ── Display metadata ──────────────────────────────────────
     occMeta: {
-      A:           null,
-      echoSurface: null,
+      echoSurface: null,  // 'p1' | 'p2' | 'contested' | null
       echoDepth:   null,
     },
 

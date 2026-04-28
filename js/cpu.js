@@ -7,17 +7,14 @@ const CpuAI = (() => {
 
   function distToOcc(state, r, c) {
     const dists = [];
-    // Area A zone
-    const zone = state.occAZone;
-    if (zone && zone.r !== null && (zone.phase === 'preview' || zone.phase === 'active')) {
-      for (const cl of occACells(zone.r, zone.c))
-        dists.push(hexDist(r, c, cl.r, cl.c));
-    }
-    // Echo Points
     const ep = state.echoPoint;
     if (ep?.active) {
-      dists.push(hexDist(r, c, ep.surfaceR, ep.surfaceC));
-      dists.push(hexDist(r, c, ep.depthR,   ep.depthC));
+      // 表層ゾーン（7マス）への距離
+      for (const cell of echoZoneCells(ep.surfaceR, ep.surfaceC, 'surface'))
+        dists.push(hexDist(r, c, cell.r, cell.c));
+      // 深層ゾーン（7マス）への距離
+      for (const cell of echoZoneCells(ep.depthR, ep.depthC, 'depth'))
+        dists.push(hexDist(r, c, cell.r, cell.c));
     }
     return dists.length > 0 ? Math.min(...dists) : 999;
   }
@@ -38,8 +35,11 @@ const CpuAI = (() => {
     }
     const ep = state.echoPoint;
     if (ep?.active) {
-      if (fromLayer === 'surface' && tr === ep.surfaceR && tc === ep.surfaceC) score += 12;
-      if (fromLayer === 'depth'   && tr === ep.depthR   && tc === ep.depthC)   score += 12;
+      const inSurf = fromLayer === 'surface' &&
+        echoZoneCells(ep.surfaceR, ep.surfaceC, 'surface').some(cl => cl.r === tr && cl.c === tc);
+      const inDept = fromLayer === 'depth' &&
+        echoZoneCells(ep.depthR, ep.depthC, 'depth').some(cl => cl.r === tr && cl.c === tc);
+      if (inSurf || inDept) score += 12;
     }
 
     for (const [dr, dc] of HEX6) {
@@ -71,7 +71,12 @@ const CpuAI = (() => {
     if (zone2?.r !== null && zone2?.phase === 'active' &&
         occACells(zone2.r, zone2.c).some(cl => tr === cl.r && tc === cl.c)) score += 30;
     const ep2 = state.echoPoint;
-    if (ep2?.active && ((tr === ep2.surfaceR && tc === ep2.surfaceC) || (tr === ep2.depthR && tc === ep2.depthC))) score += 20;
+    if (ep2?.active) {
+      const inZone =
+        echoZoneCells(ep2.surfaceR, ep2.surfaceC, 'surface').some(cl => cl.r === tr && cl.c === tc) ||
+        echoZoneCells(ep2.depthR,   ep2.depthC,   'depth').some(cl => cl.r === tr && cl.c === tc);
+      if (inZone) score += 20;
+    }
 
     // Prefer killing low-HP targets (finish them off)
     score += (def.maxHp - target.hp) * 8;

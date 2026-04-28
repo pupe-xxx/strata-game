@@ -25,36 +25,19 @@ function hexDist(r1, c1, r2, c2) {
 
 function inBounds(r, c) { return isValidCell(r, c); }
 
-/** 2×2 cells of the Area A zone (always surface layer) */
-/** Area A zone: 3-hex triangle */
-function occACells(row, col) {
-  return [
-    { r: row,   c: col,   layer:'surface' },
-    { r: row,   c: col+1, layer:'surface' },
-    { r: row+1, c: col,   layer:'surface' },
-  ];
+/** エコーゾーン：中心+隣接6マスの計7マス（ヘックス型） */
+function echoZoneCells(centerR, centerC, layer) {
+  const cells = [{ r: centerR, c: centerC, layer }];
+  for (const [dr, dc] of HEX6) {
+    const nr = centerR + dr, nc = centerC + dc;
+    if (isValidCell(nr, nc)) cells.push({ r: nr, c: nc, layer });
+  }
+  return cells;
 }
 
-/** Balanced Area A spawn — constrained to neutral center band */
+/** ダミー：旧 randomOccAPosition は削除（残存参照用に空関数として残す） */
 function randomOccAPosition(state) {
-  const neutralR = CONFIG.OCC_A_NEUTRAL_R;
-  const candidates = [];
-  for (let row = 0; row < BS; row++) {
-    if (Math.abs(row - R) > neutralR) continue;
-    for (let col = 0; col < BS; col++) {
-      const cells = occACells(row, col);
-      if (!cells.every(cl => isValidCell(cl.r, cl.c))) continue;
-      const ep = state.echoPoint;
-      const noEcho = !ep.active || (
-        (ep.surfaceR !== row || ep.surfaceC !== col) &&
-        (ep.surfaceR !== row || ep.surfaceC !== col + 1) &&
-        (ep.surfaceR !== row + 1 || ep.surfaceC !== col)
-      );
-      if (noEcho) candidates.push({ r: row, c: col });
-    }
-  }
-  if (candidates.length === 0) return { r: R, c: R };
-  return candidates[Math.floor(Math.random() * candidates.length)];
+  return { r: R, c: R };
 }
 
 // ── Terrain helpers ───────────────────────────────────────────────
@@ -486,30 +469,30 @@ function getTransitDest(state, layer, r, c) {
 
 // ── Echo Point helpers ────────────────────────────────────────────
 
-/** エコーポイントをランダム生成。表層と深層に各1マス、距離2〜ECHO_MAX_DISTの範囲 */
+/** エコーゾーンをランダム生成。表層と深層に各1中心（7マスクラスター）、
+ *  距離ECHO_MIN_DIST〜ECHO_MAX_DISTの範囲で配置 */
 function generateEchoPoints(state) {
   const ep  = state.echoPoint;
   const NR  = CONFIG.ECHO_NEUTRAL_R;
+  const MIN = CONFIG.ECHO_MIN_DIST;
   const MAX = CONFIG.ECHO_MAX_DIST;
   let found = false;
 
-  for (let attempt = 0; attempt < 400 && !found; attempt++) {
+  for (let attempt = 0; attempt < 600 && !found; attempt++) {
+    // 中心候補（中立ゾーン内、かつ周囲6マスが全て有効）
     const sr = R - NR + Math.floor(Math.random() * (2 * NR + 1));
     const sc = R - NR + Math.floor(Math.random() * (2 * NR + 1));
     if (!isValidCell(sr, sc)) continue;
+    // 7マスクラスター全体が有効かチェック
+    if (echoZoneCells(sr, sc, 'surface').length < 7) continue;
 
     const dr = R - NR + Math.floor(Math.random() * (2 * NR + 1));
     const dc = R - NR + Math.floor(Math.random() * (2 * NR + 1));
     if (!isValidCell(dr, dc)) continue;
+    if (echoZoneCells(dr, dc, 'depth').length < 7) continue;
 
     const dist = hexDist(sr, sc, dr, dc);
-    if (dist < 2 || dist > MAX) continue;
-
-    // OCC_A との重複を避ける
-    if (state.occAZone.phase !== 'dormant' && state.occAZone.r !== null) {
-      const aCells = occACells(state.occAZone.r, state.occAZone.c);
-      if (aCells.some(a => (a.r === sr && a.c === sc) || (a.r === dr && a.c === dc))) continue;
-    }
+    if (dist < MIN || dist > MAX) continue;
 
     ep.surfaceR     = sr; ep.surfaceC = sc;
     ep.depthR       = dr; ep.depthC   = dc;
@@ -517,50 +500,71 @@ function generateEchoPoints(state) {
     ep.cycleExpired = false;
     ep.holdTimer    = 0;
     ep.holdOwner    = null;
+    ep.nextScoreAt  = CONFIG.ECHO_HOLD_TURNS;
     ep.active       = true;
     found = true;
   }
 
   if (!found) {
-    ep.surfaceR = R; ep.surfaceC = R;
-    ep.depthR   = R - 1; ep.depthC = R + 2;
+    ep.surfaceR = R;     ep.surfaceC = R;
+    ep.depthR   = R - 2; ep.depthC   = R + 3;
     ep.cycleTimer   = CONFIG.ECHO_CYCLE_TURNS;
     ep.cycleExpired = false;
     ep.holdTimer    = 0;
     ep.holdOwner    = null;
+    ep.nextScoreAt  = CONFIG.ECHO_HOLD_TURNS;
     ep.active       = true;
   }
 }
 
-/** エコーポイントの保持判定・スコア・サイクル管理（毎ターン呼ぶ） */
+/** エコーゾーンの制圧者を判定（7マス中に一方のみ→制圧、両軍→拮抗） */
+function getEchoZoneController(state, layer, centerR, centerC) {
+  const cells = echoZoneCells(centerR, centerC, layer);
+  let p1 = 0, p2 = 0;
+  for (const { r, c } of cells) {
+    const p = getPieceAt(state, layer, r, c);
+    if (!p || p.reviving || p.type === 'PHANTOM') continue;
+    if (p.owner === 'p1') p1++;
+    else p2++;
+  }
+  if (p1 > 0 && p2 > 0) return 'contested';
+  if (p1 > 0) return 'p1';
+  if (p2 > 0) return 'p2';
+  return null;
+}
+
+/** エコーポイントの保持判定・連続スコア・サイクル管理（毎ターン呼ぶ） */
 function updateEchoPoint(state) {
   const ep = state.echoPoint;
   if (!ep.active) return;
 
-  const surfCtrl = getSquareController(state, 'surface', ep.surfaceR, ep.surfaceC);
-  const deptCtrl = getSquareController(state, 'depth',   ep.depthR,   ep.depthC);
+  const surfCtrl = getEchoZoneController(state, 'surface', ep.surfaceR, ep.surfaceC);
+  const deptCtrl = getEchoZoneController(state, 'depth',   ep.depthR,   ep.depthC);
   state.occMeta.echoSurface = surfCtrl;
   state.occMeta.echoDepth   = deptCtrl;
 
-  const bothHolder = (surfCtrl && surfCtrl === deptCtrl) ? surfCtrl : null;
+  // 両ゾーンが同一プレイヤー（かつ拮抗なし）→ 保持カウント
+  const bothHolder = (surfCtrl === deptCtrl && surfCtrl !== null && surfCtrl !== 'contested')
+    ? surfCtrl : null;
 
   if (bothHolder !== null && bothHolder === ep.holdOwner) {
     ep.holdTimer++;
   } else {
-    ep.holdOwner  = bothHolder;
-    ep.holdTimer  = bothHolder ? 1 : 0;
+    ep.holdOwner = bothHolder;
+    ep.holdTimer = bothHolder ? 1 : 0;
+    if (!bothHolder) ep.nextScoreAt = CONFIG.ECHO_HOLD_TURNS; // 保持解除でリセット
   }
 
-  if (ep.holdTimer >= CONFIG.ECHO_HOLD_TURNS) {
+  // スコア判定（連続スコア対応）
+  if (ep.holdOwner !== null && ep.holdTimer >= ep.nextScoreAt) {
     state.occScore[ep.holdOwner]++;
-    generateEchoPoints(state);
-    return;
+    ep.nextScoreAt += CONFIG.ECHO_CONT_TURNS; // 次のスコア閾値を+2T
   }
 
   ep.cycleTimer--;
   if (ep.cycleTimer <= 0) ep.cycleExpired = true;
 
-  // サイクル期限切れかつ誰も両方を保持していない → 新エリア
+  // サイクル期限切れかつ誰も保持していない → 新エリア生成
   if (ep.cycleExpired && bothHolder === null) {
     generateEchoPoints(state);
   }
@@ -666,44 +670,22 @@ function getAreaController(state, cells) {
 }
 
 function updateOccupation(state) {
-  // ── Echo Points ───────────────────────────────────────────────
   updateEchoPoint(state);
-
-  // ── Area A Zone lifecycle ─────────────────────────────────────
-  const zone = state.occAZone;
-  zone.timer--;
-
-  if (zone.phase === 'dormant' && zone.timer <= 0) {
-    // Transition dormant → preview
-    const pos = randomOccAPosition(state);
-    zone.r = pos.r;
-    zone.c = pos.c;
-    zone.phase = 'preview';
-    zone.timer = CONFIG.OCC_A_PREVIEW_TURNS;
-  } else if (zone.phase === 'preview' && zone.timer <= 0) {
-    // Transition preview → active
-    zone.phase = 'active';
-    zone.timer = CONFIG.OCC_A_ACTIVE_TURNS;
-  } else if (zone.phase === 'active' && zone.timer <= 0) {
-    // Score: give point to whoever controls the zone
-    const ctrl = getAreaController(state, occACells(zone.r, zone.c));
-    if (ctrl) state.occScore[ctrl]++;
-    zone.phase = 'dormant';
-    zone.timer = CONFIG.OCC_A_DORMANT_TURNS;
-    zone.r = null;
-    zone.c = null;
-  }
-
-  state.occMeta.A = (zone.phase === 'active' && zone.r !== null)
-    ? getAreaController(state, occACells(zone.r, zone.c))
-    : null;
 }
 
 // ── Victory check ─────────────────────────────────────────────────
 
 function checkVictory(state) {
+  // 先取勝利
   for (const owner of ['p1','p2']) {
     if (state.occScore[owner] >= CONFIG.WIN_SCORE) return owner;
+  }
+  // ターン制限
+  if (state.turn > CONFIG.MAX_TURNS) {
+    const s1 = state.occScore.p1, s2 = state.occScore.p2;
+    if (s1 > s2) return 'p1';
+    if (s2 > s1) return 'p2';
+    return 'draw';
   }
   return null;
 }

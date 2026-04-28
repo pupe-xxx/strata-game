@@ -53,9 +53,8 @@ const CONFIG = Object.freeze({
     VALID_REACT:   'rgba(171,71,188,0.55)',
     VALID_RESERVE: 'rgba(79,195,247,0.30)',
     SELECTED:     'rgba(255,235,59,0.60)',
-    OCC_A:        '#ffd700',
-    OCC_A_PRE:    'rgba(255,215,0,0.35)',
     ECHO:         '#26c6da',
+    ECHO_CONT:    'rgba(255,152,0,0.55)',
     WALL_1:       '#546e7a', WALL_2: '#78909c', WALL_3: '#ffd700',
     HOLE_1:       '#0d1a14', HOLE_2: '#070d0a', HOLE_3: '#ffd700',
     VINE:         '#2e7d32', VINE_P1: '#66bb6a', VINE_P2: '#ef9a9a',
@@ -74,18 +73,16 @@ const CONFIG = Object.freeze({
   LIGHT_COOLDOWN: 2,   // turns until light roller fires
   HEAVY_COOLDOWN: 3,   // turns until heavy roller fires
 
-  // ─── Area A (scoring zone) ────────────────────────────────────────
-  OCC_A_NEUTRAL_R:     4,   // max axial row distance from center for spawn
-  OCC_A_PREVIEW_TURNS: 3,
-  OCC_A_ACTIVE_TURNS:  5,
-  OCC_A_DORMANT_TURNS: 3,
-  WIN_SCORE:           2,
+  WIN_SCORE:  5,   // 先取点数
+  MAX_TURNS:  30,  // ターン上限（超過時に点数多い方の勝ち）
 
   // ─── Echo Points (エコーポイント) ────────────────────────────────
   ECHO_CYCLE_TURNS: 10,   // turns per cycle before forced reset
-  ECHO_HOLD_TURNS:  3,    // consecutive turns holding both = 1 point
-  ECHO_MAX_DIST:    4,    // max hex distance between surface and depth points
-  ECHO_NEUTRAL_R:   4,    // spawn within this row-distance of center
+  ECHO_HOLD_TURNS:  3,    // consecutive turns holding both = 1st point
+  ECHO_CONT_TURNS:  2,    // additional turns for each subsequent point
+  ECHO_MAX_DIST:    5,    // max hex distance between zone centers
+  ECHO_MIN_DIST:    3,    // min hex distance between zone centers
+  ECHO_NEUTRAL_R:   4,    // center spawn within this row-distance of board center
 
   // ─── Initial piece layout for Player 1 (bottom area) ─────────────
   // Hex validity: max(|q|,|r|,|q+r|) <= 7 where q=col-7, r=row-7

@@ -525,62 +525,57 @@ const Renderer = (() => {
     }
   }
 
-  // ── Special markers (A zone, Echo Points) ────────────────────────
+  // ── Special markers (Echo Points only) ──────────────────────────
 
-  function drawSpecialMarkers(state, layer) {
-    const C = CONFIG.CLR;
+  function drawEchoZone(state, layer, centerR, centerC, ctrlKey, isDepth) {
+    const ep   = state.echoPoint;
+    const ctrl = state.occMeta?.[ctrlKey];
+    const C    = CONFIG.CLR;
+    const cells = echoZoneCells(centerR, centerC, layer);
 
-    if (layer === 'surface') {
-      // ── Area A Zone ──
-      const zone = state.occAZone;
-      if (zone && zone.r !== null && zone.phase !== 'dormant') {
-        const cells = occACells(zone.r, zone.c);
-        const isActive = zone.phase === 'active';
-        const ctrlA = state.occMeta?.A;
-        for (const pos of cells) {
-          let fill, stroke;
-          if (isActive && ctrlA) {
-            fill   = ctrlA === 'p1' ? 'rgba(79,195,247,0.25)' : 'rgba(239,83,80,0.25)';
-            stroke = ctrlA === 'p1' ? C.P1 : C.P2;
-          } else if (isActive) {
-            fill   = 'rgba(255,215,0,0.22)';
-            stroke = C.OCC_A;
-          } else {
-            fill   = C.OCC_A_PRE;
-            stroke = 'rgba(255,215,0,0.5)';
-          }
-          drawHex(pos.r, pos.c, fill, stroke, isActive ? 1.5 : 0.8);
-        }
-        const labelCell = cells[0];
-        const lbl = isActive ? `★A残${zone.timer}` : `★A予${zone.timer}`;
-        drawMarkerRing(labelCell.r, labelCell.c, isActive ? C.OCC_A : 'rgba(255,215,0,0.6)', lbl);
+    // セル塗り
+    for (const { r, c } of cells) {
+      let fill, stroke, sw;
+      if (ctrl === 'contested') {
+        fill   = 'rgba(255,152,0,0.22)';
+        stroke = C.ECHO_CONT;
+        sw     = 1;
+      } else if (ctrl === 'p1') {
+        fill   = 'rgba(79,195,247,0.28)';
+        stroke = C.P1;
+        sw     = (r === centerR && c === centerC) ? 2 : 1;
+      } else if (ctrl === 'p2') {
+        fill   = 'rgba(239,83,80,0.28)';
+        stroke = C.P2;
+        sw     = (r === centerR && c === centerC) ? 2 : 1;
+      } else {
+        fill   = 'rgba(38,198,218,0.14)';
+        stroke = C.ECHO;
+        sw     = 0.7;
       }
-
-      // ── Echo Point (surface) ──
-      const ep = state.echoPoint;
-      if (ep?.active && ep.surfaceR !== null) {
-        const ctrl = state.occMeta?.echoSurface;
-        const fill = ctrl === 'p1' ? 'rgba(79,195,247,0.22)'
-                   : ctrl === 'p2' ? 'rgba(239,83,80,0.22)'
-                   : 'rgba(38,198,218,0.18)';
-        drawHex(ep.surfaceR, ep.surfaceC, fill, null);
-        const hold = ep.holdOwner ? ` ${ep.holdTimer}/${CONFIG.ECHO_HOLD_TURNS}` : '';
-        const cyc  = ep.cycleExpired ? '延長' : `${ep.cycleTimer}T`;
-        drawMarkerRing(ep.surfaceR, ep.surfaceC, C.ECHO, `E表${hold} [${cyc}]`);
-      }
+      drawHex(r, c, fill, stroke, sw);
     }
 
-    if (layer === 'depth') {
-      // ── Echo Point (depth) ──
-      const ep = state.echoPoint;
-      if (ep?.active && ep.depthR !== null) {
-        const ctrl = state.occMeta?.echoDepth;
-        const fill = ctrl === 'p1' ? 'rgba(79,195,247,0.22)'
-                   : ctrl === 'p2' ? 'rgba(239,83,80,0.22)'
-                   : 'rgba(38,198,218,0.18)';
-        drawHex(ep.depthR, ep.depthC, fill, null);
-        drawMarkerRing(ep.depthR, ep.depthC, C.ECHO, 'E深');
-      }
+    // 中心ラベル
+    const label = isDepth ? 'E深' : 'E表';
+    const holdStr = (ep.holdOwner && !isDepth)
+      ? ` ${ep.holdTimer}/${ep.nextScoreAt}`
+      : '';
+    const cycStr = isDepth ? '' : (ep.cycleExpired ? '[延]' : `[${ep.cycleTimer}T]`);
+    const contLabel = ctrl === 'contested' ? '⚡' : '';
+    drawMarkerRing(centerR, centerC, ctrl === 'contested' ? C.ECHO_CONT : C.ECHO,
+      `${label}${contLabel}${holdStr}${cycStr}`);
+  }
+
+  function drawSpecialMarkers(state, layer) {
+    const ep = state.echoPoint;
+    if (!ep?.active) return;
+
+    if (layer === 'surface' && ep.surfaceR !== null) {
+      drawEchoZone(state, 'surface', ep.surfaceR, ep.surfaceC, 'echoSurface', false);
+    }
+    if (layer === 'depth' && ep.depthR !== null) {
+      drawEchoZone(state, 'depth', ep.depthR, ep.depthC, 'echoDepth', true);
     }
   }
 
