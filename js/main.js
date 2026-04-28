@@ -205,11 +205,13 @@ function bindEvents() {
     else              setLayer('depth');
   }, { passive: false });
 
-  // Mobile: double-tap on side panels to toggle layer
+  // Mobile: double-tap on board-wrapper (キャンバス外の余白) で層切り替え
   let _dtTimer = null;
-  function addDoubleTapToggle(el) {
-    if (!el) return;
-    el.addEventListener('touchend', e => {
+  const boardWrapper = document.getElementById('board-wrapper');
+  if (boardWrapper) {
+    boardWrapper.addEventListener('touchend', e => {
+      // キャンバス・ボタン類をタップした場合は無視
+      if (e.target === canvas || e.target.closest('button, .act-btn, #controls-row')) return;
       if (_dtTimer) {
         clearTimeout(_dtTimer);
         _dtTimer = null;
@@ -217,10 +219,8 @@ function bindEvents() {
       } else {
         _dtTimer = setTimeout(() => { _dtTimer = null; }, 320);
       }
-    });
+    }, { passive: true });
   }
-  addDoubleTapToggle(document.getElementById('info-panel'));
-  addDoubleTapToggle(document.getElementById('side-panel'));
 
   // View buttons (no-op for hex top-down view)
   document.querySelectorAll('.view-btn').forEach(btn => {
@@ -1175,8 +1175,8 @@ function updateUI() {
   // ── ターン表示更新 ─────────────────────────────────────────────
   const turnEl = document.getElementById('turn-display');
   if (turnEl) {
-    const wave = Math.ceil(G.turn / 10);
-    turnEl.textContent = `ターン ${G.turn} / Wave ${Math.min(wave, 3)}`;
+    const wave = Math.min(Math.ceil(G.turn / 10), 3);
+    turnEl.textContent = `Wave ${wave} / ターン ${G.turn}`;
   }
 
   // ── 勝利警告 ───────────────────────────────────────────────────

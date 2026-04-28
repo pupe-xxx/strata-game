@@ -28,11 +28,6 @@ const CpuAI = (() => {
     const after  = distToOcc(state, tr, tc);
     score += (before - after) * 3;
 
-    const zone = state.occAZone;
-    if (zone && zone.r !== null && zone.phase !== 'dormant') {
-      const priority = zone.phase === 'active' ? 25 : 10;
-      if (occACells(zone.r, zone.c).some(cl => tr === cl.r && tc === cl.c)) score += priority;
-    }
     const ep = state.echoPoint;
     if (ep?.active) {
       const inSurf = fromLayer === 'surface' &&
@@ -66,10 +61,6 @@ const CpuAI = (() => {
     let score = 10;
     const def = CONFIG.PIECES[target.type];
 
-    // High priority: attack pieces on Area A zone or B points
-    const zone2 = state.occAZone;
-    if (zone2?.r !== null && zone2?.phase === 'active' &&
-        occACells(zone2.r, zone2.c).some(cl => tr === cl.r && tc === cl.c)) score += 30;
     const ep2 = state.echoPoint;
     if (ep2?.active) {
       const inZone =
