@@ -26,6 +26,10 @@ function makePiece(type, owner) {
     reviving: false,
     reviveTimer: 0,
     justRevived: false,
+    vineSlowed: false,     // slowed by enemy vine: -1 moveDist, skills blocked
+    surrounded: false,     // surrounded by 3+ ZOC sources: cannot move
+    reservedMove: null,    // {toR,toC,toLayer,viaR,viaC,viaLayer} — auto-executes next turn
+    chargingSkill: null,   // {subtype:'light'|'heavy', dir:[dr,dc], turnsLeft:N}
   };
 }
 
@@ -60,10 +64,13 @@ function createInitialState() {
 
     playerActions: [],
 
-    // Dynamic B-point positions
-    occB: CONFIG.OCC_B_INIT.map(p => ({ r: p.r, c: p.c, layer: p.layer })),
-    bMoveIn: CONFIG.B_MOVE_INTERVAL,
-    bFlashUntil: 0,
+    // ── Vine tracking ─────────────────────────────────────────────
+    p1Vines: [],  // [{r, c, layer}] oldest first
+    p2Vines: [],
+
+    // ── Tire (Roller) objects ──────────────────────────────────────
+    tires: [],      // [{id,r,c,layer,dr,dc,subtype,owner}]
+    tireCount: 0,   // monotonic ID counter
 
     damagedThisTurn: [],
 
@@ -76,14 +83,23 @@ function createInitialState() {
     },
     occScore: { p1: 0, p2: 0 },  // first to WIN_SCORE wins
 
-    // ── Display metadata ──────────────────────────────────────
-    occMeta: {
-      A: null,   // controller of active A zone (or null)
-      B0: null,
-      B1: null,
+    // ── Echo Points (エコーポイント) ──────────────────────────
+    echoPoint: {
+      active:       false,
+      surfaceR:     null, surfaceC: null,
+      depthR:       null, depthC:   null,
+      cycleTimer:   CONFIG.ECHO_CYCLE_TURNS,
+      cycleExpired: false,
+      holdTimer:    0,
+      holdOwner:    null,
     },
 
-    dcpControl: { alpha:null, beta:null, gamma:null },
+    // ── Display metadata ──────────────────────────────────────
+    occMeta: {
+      A:           null,
+      echoSurface: null,
+      echoDepth:   null,
+    },
 
     selected: null,
     actionMode: null,
@@ -153,7 +169,7 @@ function transferToRevival(state, layer, r, c) {
   for (const col of reviveCols) {
     if (!state[otherLayer][reviveRow]?.[col]?.piece) {
       piece.reviving = true;
-      piece.reviveTimer = hasDCP(state, piece.owner, 'FAST_REVIVE') ? 0 : CONFIG.REVIVE_WAIT;
+      piece.reviveTimer = CONFIG.REVIVE_WAIT;
       piece.trapped = false;
       piece.hp = piece.maxHp;
       state[otherLayer][reviveRow][col].piece = piece;

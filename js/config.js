@@ -25,17 +25,19 @@ const CONFIG = Object.freeze({
     RANGER:   { maxHp:2, height:1, moveDir:'hex', moveDist:2, atkRange:5, terrainRange:5 },
     PHANTOM:  { maxHp:1, height:3, moveDir:'hex', moveDist:3, atkRange:1, terrainRange:0 },
     ENGINEER: { maxHp:2, height:1, moveDir:'hex', moveDist:2, atkRange:1, terrainRange:0 },
+    ROLLER:   { maxHp:2, height:1, moveDir:'hex', moveDist:2, atkRange:1, terrainRange:0 },
   },
 
   PIECE_LABEL: {
     WARDEN:'ウォーデン', SCULPTOR:'スカルプター',
-    STRIKER:'ストライカー', RANGER:'レンジャー', PHANTOM:'ファントム', ENGINEER:'エンジニア',
+    STRIKER:'ストライカー', RANGER:'レンジャー', PHANTOM:'ファントム',
+    ENGINEER:'エンジニア', ROLLER:'転師',
   },
-  PIECE_EMOJI:  { WARDEN:'🛡', SCULPTOR:'⛏', STRIKER:'⚡', RANGER:'🏹', PHANTOM:'👻', ENGINEER:'🔧' },
-  PIECE_SYMBOL: { WARDEN:'◆', SCULPTOR:'◈', STRIKER:'▲', RANGER:'⊕', PHANTOM:'◎', ENGINEER:'⚙' },
+  PIECE_EMOJI:  { WARDEN:'🛡', SCULPTOR:'⛏', STRIKER:'⚡', RANGER:'🏹', PHANTOM:'👻', ENGINEER:'🔧', ROLLER:'🛞' },
+  PIECE_SYMBOL: { WARDEN:'◆', SCULPTOR:'◈', STRIKER:'▲', RANGER:'⊕', PHANTOM:'◎', ENGINEER:'⚙', ROLLER:'⊗' },
   PIECE_COLOR:  {
     WARDEN:'#b0bec5', SCULPTOR:'#bcaaa4', STRIKER:'#ff8a65',
-    RANGER:'#81c784', PHANTOM:'#ce93d8', ENGINEER:'#ffb74d',
+    RANGER:'#81c784', PHANTOM:'#ce93d8', ENGINEER:'#ffb74d', ROLLER:'#ff7043',
   },
 
   // ─── Colours ─────────────────────────────────────────────────────
@@ -44,18 +46,33 @@ const CONFIG = Object.freeze({
     DEPTH_EVEN:   '#0d1f2d', DEPTH_ODD:   '#091620',
     GRID:         '#2a4060', GRID_BRIGHT: '#3d6090',
     P1:           '#4fc3f7', P2:          '#ef5350',
-    VALID_MOVE:   'rgba(76,175,80,0.55)',
-    VALID_ATK:    'rgba(244,67,54,0.55)',
-    VALID_TRN:    'rgba(255,193,7,0.55)',
+    VALID_MOVE:    'rgba(76,175,80,0.55)',
+    VALID_ATK:     'rgba(244,67,54,0.55)',
+    VALID_TRN:     'rgba(255,193,7,0.55)',
+    VALID_VINE:    'rgba(102,187,106,0.65)',
+    VALID_REACT:   'rgba(171,71,188,0.55)',
+    VALID_RESERVE: 'rgba(79,195,247,0.30)',
     SELECTED:     'rgba(255,235,59,0.60)',
     OCC_A:        '#ffd700',
     OCC_A_PRE:    'rgba(255,215,0,0.35)',
-    OCC_B:        '#81c784',
-    DCP:          '#ba68c8',
+    ECHO:         '#26c6da',
     WALL_1:       '#546e7a', WALL_2: '#78909c', WALL_3: '#ffd700',
     HOLE_1:       '#0d1a14', HOLE_2: '#070d0a', HOLE_3: '#ffd700',
+    VINE:         '#2e7d32', VINE_P1: '#66bb6a', VINE_P2: '#ef9a9a',
+    ZOC_W:        'rgba(255,152,0,0.13)',
+    ZOC_R:        'rgba(255,82,82,0.10)',
     TRAPPED:      '#ff6f00', REVIVING: '#7b1fa2',
+    VINE_SLOWED:  '#66bb6a', SURROUNDED: '#ff6f00',
   },
+
+  // ─── Vine system ─────────────────────────────────────────────────
+  VINE_MAX:   3,    // max vines per player on board
+  VINE_RANGE: 3,    // Engineer vine placement range
+
+  // ─── Tire (Roller) system ─────────────────────────────────────────
+  TIRE_SPEED:     3,   // hexes moved per turn
+  LIGHT_COOLDOWN: 2,   // turns until light roller fires
+  HEAVY_COOLDOWN: 3,   // turns until heavy roller fires
 
   // ─── Area A (scoring zone) ────────────────────────────────────────
   OCC_A_NEUTRAL_R:     4,   // max axial row distance from center for spawn
@@ -64,25 +81,16 @@ const CONFIG = Object.freeze({
   OCC_A_DORMANT_TURNS: 3,
   WIN_SCORE:           2,
 
-  // ─── Area B ───────────────────────────────────────────────────────
-  // Positions in array coords (row, col), center=(7,7)
-  OCC_B_INIT: [
-    { r:4, c:4, layer:'surface' },   // q=-3, r=-3 → max(3,3,6)=6 ≤ 7
-    { r:10,c:10, layer:'depth'  },   // q=3, r=3
-  ],
-  B_MOVE_INTERVAL: 6,
-
-  // ─── Deep Control Points ──────────────────────────────────────────
-  DCP: [
-    { r:7, c:7,  key:'alpha', label:'α', effect:'FREE_EMERGE'   },
-    { r:5, c:7,  key:'beta',  label:'β', effect:'TERRAIN_BOOST' },
-    { r:9, c:7,  key:'gamma', label:'γ', effect:'FAST_REVIVE'   },
-  ],
+  // ─── Echo Points (エコーポイント) ────────────────────────────────
+  ECHO_CYCLE_TURNS: 10,   // turns per cycle before forced reset
+  ECHO_HOLD_TURNS:  3,    // consecutive turns holding both = 1 point
+  ECHO_MAX_DIST:    4,    // max hex distance between surface and depth points
+  ECHO_NEUTRAL_R:   4,    // spawn within this row-distance of center
 
   // ─── Initial piece layout for Player 1 (bottom area) ─────────────
   // Hex validity: max(|q|,|r|,|q+r|) <= 7 where q=col-7, r=row-7
   P1_LAYOUT: [
-    { r:11, c:5,  type:'ENGINEER' },  // q=-2, r=4
+    { r:11, c:5,  type:'ROLLER'   },  // q=-2, r=4  (was ENGINEER)
     { r:11, c:7,  type:'RANGER'   },  // q=0,  r=4
     { r:11, c:9,  type:'RANGER'   },  // q=2,  r=4
     { r:11, c:10, type:'ENGINEER' },  // q=3,  r=4, s=-7 ✓

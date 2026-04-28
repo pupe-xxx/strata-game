@@ -13,11 +13,6 @@
       <div id="logo">STRATA</div>
       <div id="header-info">
         <span id="turn-display">ターン 1</span>
-        <!-- スマホ：行動スロット表示 -->
-        <div id="mob-slot-status" class="mobile-only">
-          <span id="mob-slot-0">① 未設定</span>
-          <span id="mob-slot-1">② 未設定</span>
-        </div>
         <button id="btn-log-popup" class="mobile-only">ログ</button>
       </div>
     </header>
@@ -100,28 +95,33 @@
           <div class="ctrl-row ctrl-row-2">
             <div id="action-inline">
               <div id="action-btns">
-                <button class="act-btn" id="btn-move"        disabled>移動</button>
-                <button class="act-btn" id="btn-attack"      disabled>攻撃</button>
                 <button class="act-btn" id="btn-terrain"     disabled>地形</button>
                 <button class="act-btn" id="btn-transit"     disabled>層移動</button>
                 <button class="act-btn" id="btn-skill"       disabled>スキル</button>
+                <button class="act-btn" id="btn-vine"        disabled>🌿蔦</button>
+                <button class="act-btn" id="btn-react"       disabled>⚡反応</button>
                 <button class="act-btn" id="btn-pass-action">パス</button>
               </div>
               <div id="terrain-menu" style="display:none">
-                <button class="terrain-opt" data-dir="up">凸（壁）</button>
-                <button class="terrain-opt" data-dir="down">凹（穴）</button>
-                <button class="terrain-opt" id="btn-terrain-cancel">×</button>
+                <button class="terrain-opt" data-dir="up" id="btn-terrain-up">凸（壁）</button>
+                <button class="terrain-opt" data-dir="down" id="btn-terrain-down">凹（穴）</button>
+              </div>
+              <div id="roller-menu" style="display:none">
+                <button class="roller-opt" data-rtype="LIGHT">🛞軽(2T)</button>
+                <button class="roller-opt" data-rtype="HEAVY">🛞重(3T)</button>
+                <button id="btn-roller-cancel">×</button>
               </div>
             </div>
 
             <div id="slots-confirm">
               <div id="slots">
-                <div class="slot" id="slot-0"><span class="slot-num">①</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="0" style="display:none">✕</button></div>
-                <div class="slot" id="slot-1"><span class="slot-num">②</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="1" style="display:none">✕</button></div>
+                <div class="slot" id="slot-0" draggable="true"><span class="slot-num">①</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="0" style="display:none">✕</button></div>
+                <div class="slot" id="slot-1" draggable="true"><span class="slot-num">②</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="1" style="display:none">✕</button></div>
               </div>
               <div id="confirm-area">
                 <button id="btn-confirm" disabled>ターン確定</button>
                 <button id="btn-deselect">解除</button>
+                <button id="btn-paint" class="paint-btn" title="右クリック/長押しでメモ配置">🔴メモ</button>
               </div>
             </div>
           </div>
@@ -149,43 +149,19 @@
           <!-- Area A zone status -->
           <div id="occ-A-status" class="occ-a-status dormant">休止中</div>
 
-          <!-- B1 -->
-          <div class="occ-row" style="margin-top:6px">
-            <span class="occ-key occ-B-key">B1</span>
-            <div class="occ-bar-wrap">
-              <div class="occ-bar p1-bar" id="occ-B0-p1-bar"></div>
-              <div class="occ-bar p2-bar" id="occ-B0-p2-bar"></div>
-            </div>
-            <span class="occ-count" id="occ-B0-count">—</span>
+          <!-- Echo Points -->
+          <div style="margin-top:8px; font-size:0.75rem; color:#26c6da; font-weight:bold;">エコーポイント</div>
+          <div class="occ-row" style="margin-top:4px">
+            <span class="occ-key" style="color:#26c6da">E表</span>
+            <span class="occ-count" id="echo-surface-count" style="margin-left:auto">—</span>
           </div>
-          <!-- B2 -->
           <div class="occ-row">
-            <span class="occ-key occ-B-key">B2</span>
-            <div class="occ-bar-wrap">
-              <div class="occ-bar p1-bar" id="occ-B1-p1-bar"></div>
-              <div class="occ-bar p2-bar" id="occ-B1-p2-bar"></div>
-            </div>
-            <span class="occ-count" id="occ-B1-count">—</span>
+            <span class="occ-key" style="color:#26c6da">E深</span>
+            <span class="occ-count" id="echo-depth-count" style="margin-left:auto">—</span>
           </div>
-          <div class="victory-hint" id="b-move-timer">B移動: 6T後</div>
+          <div class="victory-hint" id="echo-hold-timer">保持: 0/3T</div>
+          <div class="victory-hint" id="echo-cycle-timer">サイクル残: 10T</div>
           <div id="victory-warn" style="display:none"></div>
-        </section>
-
-        <!-- DCP status -->
-        <section id="dcp-section">
-          <div class="section-title">DCP（深層制圧）</div>
-          <div class="dcp-row">
-            <span class="dcp-label">α 任意浮上</span>
-            <span class="dcp-status" id="dcp-alpha">—</span>
-          </div>
-          <div class="dcp-row">
-            <span class="dcp-label">β 地形2段</span>
-            <span class="dcp-status" id="dcp-beta">—</span>
-          </div>
-          <div class="dcp-row">
-            <span class="dcp-label">γ 即時復活</span>
-            <span class="dcp-status" id="dcp-gamma">—</span>
-          </div>
         </section>
 
         <!-- Player 1 status (PC only) -->
@@ -198,17 +174,16 @@
         <!-- Mobile: action buttons (shown when piece selected) -->
         <section id="mob-action-section">
           <div id="mob-action-btns">
-            <button class="act-btn mob-act" id="mob-btn-move"    disabled>移動</button>
-            <button class="act-btn mob-act" id="mob-btn-attack"  disabled>攻撃</button>
             <button class="act-btn mob-act" id="mob-btn-terrain" disabled>地形</button>
             <button class="act-btn mob-act" id="mob-btn-transit" disabled>層移動</button>
             <button class="act-btn mob-act" id="mob-btn-skill"   disabled>スキル</button>
+            <button class="act-btn mob-act" id="mob-btn-vine"    disabled>🌿蔦</button>
+            <button class="act-btn mob-act" id="mob-btn-react"   disabled>⚡反応</button>
             <button class="act-btn mob-act" id="mob-btn-pass">パス</button>
           </div>
           <div id="mob-terrain-menu" style="display:none">
-            <button class="terrain-opt" data-mob-dir="up">凸（壁）</button>
-            <button class="terrain-opt" data-mob-dir="down">凹（穴）</button>
-            <button class="terrain-opt" id="mob-btn-terrain-cancel">×</button>
+            <button class="terrain-opt" data-mob-dir="up" id="mob-btn-terrain-up">凸（壁）</button>
+            <button class="terrain-opt" data-mob-dir="down" id="mob-btn-terrain-down">凹（穴）</button>
           </div>
         </section>
 

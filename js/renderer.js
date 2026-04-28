@@ -120,7 +120,6 @@ const Renderer = (() => {
       ctx.strokeStyle = '#000';
       ctx.lineWidth = 1.2 * scale;
       ctx.stroke();
-      // Stage indicator
       ctx.fillStyle = '#fff';
       ctx.font = `bold ${Math.max(8, 9 * scale)}px monospace`;
       ctx.textAlign = 'center';
@@ -140,6 +139,33 @@ const Renderer = (() => {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(`H${terrain.stage}`, x, y);
+    } else if (terrain.type === 'vine' && terrain.placedBy === 'p1') {
+      // P2's vines are invisible to the player
+      const vineCol = C.VINE_P1;
+      // Background tint
+      hexPath(x, y, HEX * 0.82);
+      ctx.fillStyle = vineCol + '55';
+      ctx.fill();
+      // Border
+      ctx.strokeStyle = C.VINE;
+      ctx.lineWidth = 1.5 * scale;
+      ctx.stroke();
+      // Web lines
+      ctx.strokeStyle = vineCol;
+      ctx.lineWidth = 0.8 * scale;
+      const r2 = HEX * 0.5;
+      for (let i = 0; i < 6; i++) {
+        const angle = (Math.PI / 3) * i;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + r2 * Math.cos(angle), y + r2 * Math.sin(angle));
+        ctx.stroke();
+      }
+      ctx.font = `bold ${Math.max(7, 8 * scale)}px monospace`;
+      ctx.fillStyle = vineCol;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('V', x, y);
     }
   }
 
@@ -187,6 +213,52 @@ const Renderer = (() => {
       ctx.strokeStyle = CONFIG.CLR.TRAPPED;
       ctx.lineWidth   = 2 * scale;
       ctx.stroke();
+    }
+    // Vine-slowed indicator (green dashed ring)
+    if (piece.vineSlowed) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, pr + 3 * scale, 0, Math.PI * 2);
+      ctx.strokeStyle = CONFIG.CLR.VINE_SLOWED;
+      ctx.lineWidth   = 1.8 * scale;
+      ctx.setLineDash([3 * scale, 2 * scale]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // Surrounded indicator (orange double ring)
+    if (piece.surrounded) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, pr + 5 * scale, 0, Math.PI * 2);
+      ctx.strokeStyle = CONFIG.CLR.SURROUNDED;
+      ctx.lineWidth   = 2 * scale;
+      ctx.stroke();
+    }
+
+    // Charging indicator: direction arrow + countdown badge
+    if (piece.chargingSkill) {
+      const { dir, turnsLeft } = piece.chargingSkill;
+      // Compute direction using neighbor cellconst nRow = row + dir[0], nCol = col + dir[1];
+      if (isValidCell(nRow, nCol)) {
+        const { x: nx, y: ny } = cellToScreen(nRow, nCol);
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + (nx - cx) * 0.55, cy + (ny - cy) * 0.55);
+        ctx.strokeStyle = '#ff5722';
+        ctx.lineWidth   = 2 * scale;
+        ctx.setLineDash([3 * scale, 2 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      // Countdown badge
+      const bx = cx + pr * 0.75, by = cy - pr * 0.75;
+      ctx.beginPath();
+      ctx.arc(bx, by, 5 * scale, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff5722';
+      ctx.fill();
+      ctx.fillStyle = 'white';
+      ctx.font = `bold ${Math.max(6, 7 * scale)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(turnsLeft, bx, by);
     }
 
     // Emoji / symbol
@@ -260,10 +332,175 @@ const Renderer = (() => {
 
   function drawHighlights(cells, mode) {
     const C = CONFIG.CLR;
-    const colMap = { MOVE:'VALID_MOVE', ATTACK:'VALID_ATK', TERRAIN:'VALID_TRN', TRANSIT:'VALID_MOVE', SKILL:'VALID_ATK' };
+    const colMap = {
+      MOVE:'VALID_MOVE', ATTACK:'VALID_ATK', TERRAIN:'VALID_TRN',
+      TRANSIT:'VALID_MOVE', SKILL:'VALID_ATK',
+      VINE:'VALID_VINE', REACT:'VALID_REACT', RESERVE:'VALID_RESERVE',
+    };
     const fillCol = C[colMap[mode]] ?? C.VALID_MOVE;
     for (const { r, c } of cells) {
       drawHex(r, c, fillCol, null);
+    }
+  }
+
+  /** Draw vine lines between P1's vine anchors (only P1 can see these) */
+  function drawVineLines(state, layer) {
+    if (!state.p1Vines || state.p1Vines.length < 2) return;
+    const C = CONFIG.CLR;
+    const lines = computeVineLines(state, 'p1');
+    for (const { cells, layer: lyr } of lines) {
+      if (lyr !== layer) continue;
+      for (const { r, c } of cells) {
+        if (!isValidCell(r, c)) continue;
+        const { x, y } = cellToScreen(r, c);
+        hexPath(x, y, HEX * 0.4);
+        ctx.fillStyle = 'rgba(102,187,106,0.3)';
+        ctx.fill();
+        ctx.strokeStyle = C.VINE_P1;
+        ctx.lineWidth = 1 * scale;
+        ctx.setLineDash([2 * scale, 2 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  /** Draw paint markers (player annotations, not game state) */
+  function drawPaintMarkers(markers, layer) {
+    if (!markers || markers.size === 0) return;
+    const COLORS = {
+      red:    'rgba(239,83,80,0.40)',
+      yellow: 'rgba(255,220,0,0.40)',
+      blue:   'rgba(79,195,247,0.40)',
+    };
+    const ICONS = { red: '⚠', yellow: '🔔', blue: 'ℹ' };
+    for (const [key, color] of markers) {
+      const [lyr, r, c] = key.split(',');
+      if (lyr !== layer) continue;
+      const ri = parseInt(r), ci = parseInt(c);
+      if (!isValidCell(ri, ci)) continue;
+      const { x, y } = cellToScreen(ri, ci);
+      hexPath(x, y, HEX * 0.88);
+      ctx.fillStyle = COLORS[color] ?? COLORS.red;
+      ctx.fill();
+      ctx.strokeStyle = (COLORS[color] ?? COLORS.red).replace('0.40', '0.8');
+      ctx.lineWidth = 1.5 * scale;
+      ctx.stroke();
+      // アイコン表示
+      const icon = ICONS[color] ?? '⚠';
+      ctx.font = `${Math.round(HEX * 0.45 * scale)}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.fillText(icon, x, y);
+    }
+  }
+
+  /** Draw active tires on the board */
+  function drawTires(state, layer) {
+    if (!state.tires?.length) return;
+    for (const tire of state.tires) {
+      if (tire.layer !== layer) continue;
+      if (!isValidCell(tire.r, tire.c)) continue;
+      const { x, y } = cellToScreen(tire.r, tire.c);
+      const tireCol = tire.owner === 'p1' ? CONFIG.CLR.P1 : CONFIG.CLR.P2;
+
+      // Outer ring
+      ctx.beginPath();
+      ctx.arc(x, y, HEX * 0.38, 0, Math.PI * 2);
+      ctx.strokeStyle = tireCol;
+      ctx.lineWidth = 3.5 * scale;
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fill();
+
+      // Direction arrow: point toward next step
+      const nx = x + tire.dc * HEX * 0.55, ny = y + tire.dr * HEX * 0.55;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(nx, ny);
+      ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+      ctx.lineWidth = 1.8 * scale;
+      ctx.stroke();
+
+      // Type label
+      ctx.font = `bold ${Math.max(7, 9 * scale)}px monospace`;
+      ctx.fillStyle = tireCol;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tire.subtype === 'light' ? '軽' : '重', x, y);
+    }
+  }
+
+  /** Draw reserved movement paths for P1 pieces */
+  function drawReservedPaths(state, layer) {
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
+        if (!isValidCell(r, c)) continue;
+        const p = state[layer][r][c].piece;
+        if (!p || p.owner !== 'p1' || !p.reservedMove) continue;
+        const { toR, toC, viaR, viaC } = p.reservedMove;
+        const src = cellToScreen(r, c);
+        const dst = cellToScreen(toR, toC);
+        // Draw dashed arrow from source to destination
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        if (viaR != null) {
+          const via = cellToScreen(viaR, viaC);
+          ctx.lineTo(via.x, via.y);
+        }
+        ctx.lineTo(dst.x, dst.y);
+        ctx.strokeStyle = 'rgba(100,200,255,0.7)';
+        ctx.lineWidth = 2 * scale;
+        ctx.setLineDash([4 * scale, 3 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Arrow head at destination
+        ctx.beginPath();
+        ctx.arc(dst.x, dst.y, 4 * scale, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(100,200,255,0.9)';
+        ctx.fill();
+      }
+    }
+  }
+
+  /** Draw ZOC overlay for enemy pieces threatening p1 */
+  function drawZOCOverlay(state, layer) {
+    const C = CONFIG.CLR;
+    const wardenZOC = new Set();
+    const rangerZOC = new Set();
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
+        const p = state[layer][r][c].piece;
+        if (!p || p.owner !== 'p2' || p.reviving) continue;
+        if (p.type === 'WARDEN') {
+          for (let i = 0; i < 6; i++) {
+            const dr = [0,0,1,-1,1,-1][i], dc = [1,-1,0,0,-1,1][i];
+            const nr = r + dr, nc = c + dc;
+            if (isValidCell(nr, nc)) wardenZOC.add(`${nr},${nc}`);
+          }
+        } else if (p.type === 'RANGER') {
+          const dirs6 = [[0,1],[0,-1],[1,0],[-1,0],[1,-1],[-1,1]];
+          for (const [dr, dc] of dirs6) {
+            for (let step = 1; step <= CONFIG.PIECES.RANGER.atkRange; step++) {
+              const nr = r + dr * step, nc = c + dc * step;
+              if (!isValidCell(nr, nc)) break;
+              rangerZOC.add(`${nr},${nc}`);
+              const t = state[layer][nr][nc].terrain;
+              if (t.type === 'wall' && t.stage >= 2) break;
+              if (state[layer][nr][nc].piece) break;
+            }
+          }
+        }
+      }
+    }
+    for (const key of wardenZOC) {
+      const [r, c] = key.split(',').map(Number);
+      drawHex(r, c, C.ZOC_W, null);
+    }
+    for (const key of rangerZOC) {
+      const [r, c] = key.split(',').map(Number);
+      if (!wardenZOC.has(key)) drawHex(r, c, C.ZOC_R, null);
     }
   }
 
@@ -288,7 +525,7 @@ const Renderer = (() => {
     }
   }
 
-  // ── Special markers (A zone, B zones, DCP) ───────────────────────
+  // ── Special markers (A zone, Echo Points) ────────────────────────
 
   function drawSpecialMarkers(state, layer) {
     const C = CONFIG.CLR;
@@ -319,49 +556,41 @@ const Renderer = (() => {
         drawMarkerRing(labelCell.r, labelCell.c, isActive ? C.OCC_A : 'rgba(255,215,0,0.6)', lbl);
       }
 
-      // ── B1 (surface) ──
-      const isFlashing = Date.now() < (state.bFlashUntil ?? 0);
-      state.occB.forEach((bp, i) => {
-        if ((bp.layer ?? 'surface') !== 'surface') return;
-        const ctrlBi = state.occMeta?.[`B${i}`];
-        for (const cell of bCells(bp)) {
-          if (isFlashing) {
-            drawHex(cell.r, cell.c, 'rgba(129,199,132,0.45)', null);
-          } else if (ctrlBi) {
-            const f = ctrlBi === 'p1' ? 'rgba(79,195,247,0.2)' : 'rgba(239,83,80,0.2)';
-            drawHex(cell.r, cell.c, f, null);
-          }
-          drawMarkerRing(cell.r, cell.c, C.OCC_B, '');
-        }
-        drawMarkerRing(bp.r, bp.c, C.OCC_B, `B${i + 1}`);
-      });
+      // ── Echo Point (surface) ──
+      const ep = state.echoPoint;
+      if (ep?.active && ep.surfaceR !== null) {
+        const ctrl = state.occMeta?.echoSurface;
+        const fill = ctrl === 'p1' ? 'rgba(79,195,247,0.22)'
+                   : ctrl === 'p2' ? 'rgba(239,83,80,0.22)'
+                   : 'rgba(38,198,218,0.18)';
+        drawHex(ep.surfaceR, ep.surfaceC, fill, null);
+        const hold = ep.holdOwner ? ` ${ep.holdTimer}/${CONFIG.ECHO_HOLD_TURNS}` : '';
+        const cyc  = ep.cycleExpired ? '延長' : `${ep.cycleTimer}T`;
+        drawMarkerRing(ep.surfaceR, ep.surfaceC, C.ECHO, `E表${hold} [${cyc}]`);
+      }
     }
 
     if (layer === 'depth') {
-      // DCP markers
-      for (const dcp of CONFIG.DCP) {
-        drawMarkerRing(dcp.r, dcp.c, C.DCP, dcp.label);
+      // ── Echo Point (depth) ──
+      const ep = state.echoPoint;
+      if (ep?.active && ep.depthR !== null) {
+        const ctrl = state.occMeta?.echoDepth;
+        const fill = ctrl === 'p1' ? 'rgba(79,195,247,0.22)'
+                   : ctrl === 'p2' ? 'rgba(239,83,80,0.22)'
+                   : 'rgba(38,198,218,0.18)';
+        drawHex(ep.depthR, ep.depthC, fill, null);
+        drawMarkerRing(ep.depthR, ep.depthC, C.ECHO, 'E深');
       }
-      // B2 (depth)
-      const isFlashing = Date.now() < (state.bFlashUntil ?? 0);
-      state.occB.forEach((bp, i) => {
-        if ((bp.layer ?? 'surface') !== 'depth') return;
-        const ctrlBi = state.occMeta?.[`B${i}`];
-        for (const cell of bCells(bp)) {
-          if (isFlashing) {
-            drawHex(cell.r, cell.c, 'rgba(129,199,132,0.45)', null);
-          } else if (ctrlBi) {
-            const f = ctrlBi === 'p1' ? 'rgba(79,195,247,0.2)' : 'rgba(239,83,80,0.2)';
-            drawHex(cell.r, cell.c, f, null);
-          }
-          drawMarkerRing(cell.r, cell.c, CONFIG.CLR.OCC_B, '');
-        }
-        drawMarkerRing(bp.r, bp.c, CONFIG.CLR.OCC_B, `B${i + 1}`);
-      });
     }
   }
 
   // ── Main draw ────────────────────────────────────────────────────
+
+  let _paintMarkers = null;
+  function setPaintMarkers(m) { _paintMarkers = m; }
+
+  let _reserveCells = [];
+  function setReserveCells(cells) { _reserveCells = cells ?? []; }
 
   function draw(state, posOverrides, flashSet) {
     if (!ctx) return;
@@ -389,7 +618,15 @@ const Renderer = (() => {
     // 2. Special markers
     drawSpecialMarkers(state, layer);
 
+    // 2.5 ZOC overlay + vine lines + paint markers
+    drawZOCOverlay(state, layer);
+    drawVineLines(state, layer);
+    if (_paintMarkers) drawPaintMarkers(_paintMarkers, layer);
+
     // 3. Highlights
+    if (state.selected && _reserveCells.length > 0 && state.actionMode === 'MOVE') {
+      drawHighlights(_reserveCells, 'RESERVE');
+    }
     if (state.selected && state.validCells.length > 0) {
       drawHighlights(state.validCells, state.actionMode);
     }
@@ -399,6 +636,10 @@ const Renderer = (() => {
     if (state.selected && state.selected.layer === layer) {
       drawSelectedCell(state.selected.r, state.selected.c);
     }
+
+    // 3.5 Reserved paths + tires
+    drawReservedPaths(state, layer);
+    drawTires(state, layer);
 
     // 4. Terrain + pieces (back to front: higher row = drawn later)
     for (let row = 0; row < BS; row++) {
@@ -429,6 +670,6 @@ const Renderer = (() => {
 
   return {
     init, resize, setViewDir, getViewDir,
-    cellToScreen, screenToCell, hitTestPiece, draw,
+    cellToScreen, screenToCell, hitTestPiece, draw, setPaintMarkers, setReserveCells,
   };
 })();

@@ -3,8 +3,17 @@
 
 // ── Game state (module-level) ─────────────────────────────────────
 let G;  // game state
-let selectedHandPiece = null;  // hand piece being deployed
-let currentSkillMode  = null;  // 'PUSH' | 'SNIPE' | 'SWAP' | 'REPAIR'
+let selectedHandPiece  = null;
+let currentSkillMode   = null;
+let reserveDestination = null;  // {r,c,layer} — step 1 of 2-step reserve selection
+let reserveCells       = [];    // 2-turn preview cells shown in MOVE mode
+const paintMarkers = new Map(); // key="layer,r,c" → 'red'|'yellow'|'blue'
+const PAINT_COLORS = ['red', 'yellow', 'blue'];
+let currentPaintColor  = 'red'; // 現在の選択色（右クリック/長押しで使用）
+
+// Long-press detection for mobile paint
+let _longPressTimer = null;
+let _longPressStart = null;
 
 // Damage flash: pieceId → expiry timestamp (display-only, not in state)
 const damageFlash = new Map();
@@ -94,7 +103,18 @@ function getSkillName(pieceType) {
   return { WARDEN:'押し出し', RANGER:'狙撃', STRIKER:'位置交換', ENGINEER:'修繕' }[pieceType] || null;
 }
 
+function canUseVine(pieceType)  { return pieceType === 'ENGINEER'; }
+function canUseReact(pieceType, atkRange) { return atkRange > 0; }
+function canUseRoller(pieceType) { return pieceType === 'ROLLER'; }
+
 function isMobile() { return window.innerWidth <= 700; }
+
+function updatePaintButton() {
+  const btn = document.getElementById('btn-paint');
+  const icons = { red:'🔴', yellow:'🟡', blue:'🔵' };
+  btn.textContent = `${icons[currentPaintColor]}メモ`;
+  btn.dataset.color = currentPaintColor;
+}
 
 // ── Tab / panel switching ──────────────────────────────────────────
 function switchInfoTab(tabName) {
@@ -120,6 +140,7 @@ function setActBtn(id, opts) {
 // ── Init ──────────────────────────────────────────────────────────
 function initGame() {
   G = createInitialState();
+  generateEchoPoints(G);
   // On mobile, move controls-row to be a direct grid child of game-layout
   // so it gets its own grid row and isn't clipped by board-wrapper overflow.
   if (isMobile()) {
@@ -136,6 +157,12 @@ function initGame() {
 
 function restartGame() {
   G = createInitialState();
+  generateEchoPoints(G);
+  paintMarkers.clear();
+  Renderer.setPaintMarkers(paintMarkers);
+  paintMode = false;
+  document.getElementById('btn-paint')?.classList.remove('active');
+  reserveDestination = null;
   clearSlots();
   hideGameOver();
   clearInfoPanel();
@@ -162,8 +189,10 @@ function tick() {
 function bindEvents() {
   // Canvas click / touch
   const canvas = document.getElementById('game-canvas');
-  canvas.addEventListener('click',     onCanvasClick);
-  canvas.addEventListener('touchend',  onCanvasTouch, { passive: false });
+  canvas.addEventListener('click',       onCanvasClick);
+  canvas.addEventListener('contextmenu', onCanvasRightClick);
+  canvas.addEventListener('touchstart',  onCanvasTouchStart, { passive: false });
+  canvas.addEventListener('touchend',    onCanvasTouchEnd,   { passive: false });
 
   // Layer toggle
   document.getElementById('btn-surface').addEventListener('click', () => setLayer('surface'));
@@ -175,39 +204,39 @@ function bindEvents() {
   });
 
   // Action buttons
-  document.getElementById('btn-move')    .addEventListener('click', () => setActionMode('MOVE'));
-  document.getElementById('btn-attack')  .addEventListener('click', () => setActionMode('ATTACK'));
   document.getElementById('btn-terrain') .addEventListener('click', () => setActionMode('TERRAIN'));
   document.getElementById('btn-skill')   .addEventListener('click', () => setActionMode('SKILL'));
+  document.getElementById('btn-vine')    .addEventListener('click', () => setActionMode('VINE'));
+  document.getElementById('btn-react')   .addEventListener('click', () => setActionMode('REACT'));
   document.getElementById('btn-pass-action').addEventListener('click', queuePass);
+
+  // Roller menu
+  document.querySelectorAll('.roller-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      currentSkillMode = 'ROLLER_' + btn.dataset.rtype;
+      document.getElementById('roller-menu').style.display = 'none';
+      setActionMode('SKILL');
+    });
+  });
+  document.getElementById('btn-roller-cancel')?.addEventListener('click', () => {
+    document.getElementById('roller-menu').style.display = 'none';
+    currentSkillMode = null;
+    G.validCells = [];
+  });
+
+  // Paint button: クリックで色をサイクル切替
+  document.getElementById('btn-paint').addEventListener('click', () => {
+    const idx = PAINT_COLORS.indexOf(currentPaintColor);
+    currentPaintColor = PAINT_COLORS[(idx + 1) % PAINT_COLORS.length];
+    updatePaintButton();
+    setMessage(`メモ色: ${{'red':'🔴赤','yellow':'🟡黄','blue':'🔵青'}[currentPaintColor]} — 右クリック/長押しでメモ配置`);
+  });
 
   // Layer transit
   document.getElementById('btn-transit').addEventListener('click', () => {
     if (!G.selected) return;
     if (G.playerActions.length >= 2) { setMessage('すでに2アクション設定済みです'); return; }
     const { layer, r, c } = G.selected;
-
-    // α DCP FREE_EMERGE: depth→surface with arbitrary destination
-    if (layer === 'depth' && hasDCP(G, 'p1', 'FREE_EMERGE')) {
-      // Switch view to surface so player can see destination highlights
-      G.viewLayer = 'surface';
-      document.getElementById('btn-surface').classList.add('active');
-      document.getElementById('btn-depth').classList.remove('active');
-      // Keep selection and enter TRANSIT targeting mode
-      G.selected = { layer: 'depth', r, c };
-      G.actionMode = 'TRANSIT';
-      G.validCells = [];
-      for (let tr = 0; tr < CONFIG.BOARD_SIZE; tr++) {
-        for (let tc = 0; tc < CONFIG.BOARD_SIZE; tc++) {
-          if (!G.surface[tr][tc].piece)
-            G.validCells.push({ r: tr, c: tc, layer: 'surface' });
-        }
-      }
-      document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
-      setActBtn('btn-transit', { active: true });
-      setMessage(`α DCP 任意浮上 — 表層の移動先をクリック (${G.validCells.length}箇所)`);
-      return;
-    }
 
     // Normal transit (same grid coordinate)
     const dest = getTransitDest(G, layer, r, c);
@@ -233,13 +262,16 @@ function bindEvents() {
       : 'アクション設定完了。「ターン確定」を押してください');
   });
 
-  // Terrain direction
+  // Terrain direction (desktop: data-dir, mobile: data-mob-dir)
+  function applyTerrainDir(dir) {
+    G.terrainDir = dir;
+    document.querySelectorAll('.terrain-opt').forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll(`.terrain-opt[data-dir="${dir}"], .terrain-opt[data-mob-dir="${dir}"]`)
+      .forEach(b => b.classList.add('selected'));
+    setActionMode('TERRAIN');
+  }
   document.querySelectorAll('.terrain-opt[data-dir]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      G.terrainDir = btn.dataset.dir;
-      document.getElementById('terrain-menu').style.display = 'none';
-      setActionMode('TERRAIN');
-    });
+    btn.addEventListener('click', () => applyTerrainDir(btn.dataset.dir));
   });
   document.getElementById('btn-terrain-cancel').addEventListener('click', () => {
     document.getElementById('terrain-menu').style.display = 'none';
@@ -263,8 +295,8 @@ function bindEvents() {
   });
 
   // Mobile action buttons
-  document.getElementById('mob-btn-move')   ?.addEventListener('click', () => setActionMode('MOVE'));
-  document.getElementById('mob-btn-attack') ?.addEventListener('click', () => setActionMode('ATTACK'));
+  document.getElementById('mob-btn-vine')   ?.addEventListener('click', () => setActionMode('VINE'));
+  document.getElementById('mob-btn-react')  ?.addEventListener('click', () => setActionMode('REACT'));
   document.getElementById('mob-btn-terrain')?.addEventListener('click', () => {
     if (G.terrainDir === null) {
       document.getElementById('mob-terrain-menu').style.display = 'flex';
@@ -279,19 +311,9 @@ function bindEvents() {
   // Hide view buttons on mobile too (hex is always top-down)
   document.querySelectorAll('.view-btn').forEach(b => b.style.display = 'none');
 
-  // Mobile terrain submenu
+  // Mobile terrain submenu (data-mob-dir)
   document.querySelectorAll('.terrain-opt[data-mob-dir]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      G.terrainDir = btn.dataset.mobDir;
-      document.getElementById('mob-terrain-menu').style.display = 'none';
-      setActionMode('TERRAIN');
-    });
-  });
-  document.getElementById('mob-btn-terrain-cancel')?.addEventListener('click', () => {
-    document.getElementById('mob-terrain-menu').style.display = 'none';
-    G.actionMode = null;
-    G.terrainDir = null;
-    G.validCells = [];
+    btn.addEventListener('click', () => applyTerrainDir(btn.dataset.mobDir));
   });
 
   // Mobile: log popup
@@ -304,6 +326,51 @@ function bindEvents() {
   document.getElementById('log-popup')?.addEventListener('click', e => {
     if (e.target === document.getElementById('log-popup'))
       document.getElementById('log-popup').style.display = 'none';
+  });
+
+  // Slot drag & drop (swap action order)
+  let dragSrcIdx = null;
+  [0, 1].forEach(idx => {
+    const slot = document.getElementById(`slot-${idx}`);
+    slot.addEventListener('dragstart', e => {
+      dragSrcIdx = idx;
+      slot.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    slot.addEventListener('dragend', () => {
+      slot.classList.remove('dragging');
+      document.querySelectorAll('.slot').forEach(s => s.classList.remove('drag-over'));
+    });
+    slot.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      if (dragSrcIdx !== idx) slot.classList.add('drag-over');
+    });
+    slot.addEventListener('dragleave', () => slot.classList.remove('drag-over'));
+    slot.addEventListener('drop', e => {
+      e.preventDefault();
+      slot.classList.remove('drag-over');
+      if (dragSrcIdx === null || dragSrcIdx === idx) return;
+      // Save, swap, redisplay
+      const saved = [...G.playerActions];
+      [saved[dragSrcIdx], saved[idx]] = [saved[idx], saved[dragSrcIdx]];
+      G.playerActions = [];
+      clearSlots();
+      saved.filter(Boolean).forEach((a, i) => {
+        G.playerActions.push(a);
+        if (a.type === 'PASS') {
+          const slotEl = document.getElementById(`slot-${i}`);
+          slotEl.querySelector('.slot-text').textContent = 'パス';
+          slotEl.classList.add('filled');
+          slotEl.querySelector('.slot-clear').style.display = 'inline';
+        } else {
+          const loc = findPieceById(G, a.pieceId);
+          if (loc) fillSlot(i, a, loc.piece);
+        }
+      });
+      document.getElementById('btn-confirm').disabled = G.playerActions.length === 0;
+      dragSrcIdx = null;
+    });
   });
 
   // Restart
@@ -325,19 +392,61 @@ function setLayer(layer) {
 }
 
 // ── Canvas interaction ────────────────────────────────────────────
-function onCanvasTouch(e) {
+function onCanvasTouchStart(e) {
   e.preventDefault();
   const rect  = e.target.getBoundingClientRect();
   const touch = e.changedTouches[0];
-  handleCanvasInteraction(touch.clientX - rect.left, touch.clientY - rect.top);
+  _longPressStart = { px: touch.clientX - rect.left, py: touch.clientY - rect.top };
+  _longPressTimer = setTimeout(() => {
+    if (_longPressStart) {
+      cyclePaintMarker(_longPressStart.px, _longPressStart.py);
+      _longPressStart = null;
+    }
+  }, 500);
+}
+
+function onCanvasTouchEnd(e) {
+  e.preventDefault();
+  if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+  if (!_longPressStart) return; // was long-press, handled already
+  const rect  = e.target.getBoundingClientRect();
+  const touch = e.changedTouches[0];
+  handleCanvasInteraction(touch.clientX - rect.left, touch.clientY - rect.top, false);
+  _longPressStart = null;
 }
 
 function onCanvasClick(e) {
   const rect = e.target.getBoundingClientRect();
-  handleCanvasInteraction(e.clientX - rect.left, e.clientY - rect.top);
+  handleCanvasInteraction(e.clientX - rect.left, e.clientY - rect.top, false);
 }
 
-function handleCanvasInteraction(px, py) {
+function onCanvasRightClick(e) {
+  e.preventDefault();
+  const rect = e.target.getBoundingClientRect();
+  cyclePaintMarker(e.clientX - rect.left, e.clientY - rect.top);
+}
+
+/** 右クリック/長押し：そのヘックスのメモ色を cycling */
+function cyclePaintMarker(px, py) {
+  const cell = Renderer.screenToCell(px, py);
+  if (!cell || !isValidCell(cell.r, cell.c)) return;
+  const key = `${G.viewLayer},${cell.r},${cell.c}`;
+  const cur = paintMarkers.get(key);
+  if (cur === undefined) {
+    paintMarkers.set(key, currentPaintColor);
+  } else {
+    const idx = PAINT_COLORS.indexOf(cur);
+    const next = PAINT_COLORS[(idx + 1) % PAINT_COLORS.length];
+    if (next === PAINT_COLORS[0] && idx === PAINT_COLORS.length - 1) {
+      paintMarkers.delete(key);
+    } else {
+      paintMarkers.set(key, next);
+    }
+  }
+  Renderer.setPaintMarkers(paintMarkers);
+}
+
+function handleCanvasInteraction(px, py, isRightClick) {
   if (G.phase !== 'PLAYER_INPUT') return;
   // Piece body hit test first — catches clicks on tall pieces above their tile
   const cell = Renderer.hitTestPiece(G, G.viewLayer, px, py)
@@ -375,17 +484,6 @@ function handleCanvasInteraction(px, py) {
     return;
   }
 
-  // α DCP FREE_EMERGE TRANSIT: layer-independent surface targeting
-  if (G.selected && G.actionMode === 'TRANSIT') {
-    const isValid = G.validCells.some(v => v.r === r && v.c === c);
-    if (isValid) {
-      queueAction(r, c, 'surface');
-      return;
-    }
-    // Click elsewhere: stay in targeting mode
-    return;
-  }
-
   // If we're in a targeting mode, treat click as target selection
   if (G.selected && G.actionMode && G.actionMode !== null) {
     const isValid = G.validCells.some(v => v.r === r && v.c === c && v.layer === layer);
@@ -399,6 +497,16 @@ function handleCanvasInteraction(px, py) {
       const isAtk = G.attackCells.some(v => v.r === r && v.c === c && v.layer === layer);
       if (isAtk) {
         G.actionMode = 'ATTACK';
+        queueAction(r, c, layer);
+        return;
+      }
+    }
+
+    // In MOVE mode: clicking a reserve (2-turn) cell enters RESERVE flow
+    if (G.actionMode === 'MOVE' && reserveCells.length > 0) {
+      const isRes = reserveCells.some(v => v.r === r && v.c === c && v.layer === layer);
+      if (isRes) {
+        G.actionMode = 'RESERVE';
         queueAction(r, c, layer);
         return;
       }
@@ -472,11 +580,25 @@ const PIECE_INFO = {
     trait:   '高さ3の幽霊。地形効果・壁を完全無視。どのマスからでも層移動可能。',
   },
   ENGINEER: {
-    move:    '上下左右 1マス',
-    attack:  '隣接4方向 射程1',
+    move:    '全6方向 最大2マス',
+    attack:  '隣接6方向 射程1',
     terrain: '地形変形不可',
-    skill:   '🔧 修繕: 隣接する味方駒を1HP回復（最大HPまで）',
-    trait:   '支援特化。ピンチの味方を回復して戦線を維持する。HP満タンの駒には使用不可。',
+    skill:   '🔧 修繕: 隣接する味方駒を1HP回復\n🌿 蔦設置: 射程3内のマスに蔦を仕込む（最大3個）',
+    trait:   '支援と罠設置の専門家。蔦は敵を減速・スキル封印し、味方には射程ボーナスを与える。',
+  },
+  ROLLER: {
+    move:    '全6方向 最大2マス',
+    attack:  '隣接6方向 射程1',
+    terrain: '地形変形不可',
+    skill:   '🛞 軽ローラー(2T): 最初に当たった駒でストップ\n🛞 重ローラー(3T): 全ての駒を貫通',
+    trait:   'チャージ後に毎ターン3マス転がるローラーを発射。壁で停止・蔦を破壊。味方にも当たるため方向に注意。',
+  },
+  WARDEN: {
+    move:    '全6方向 最大2マス',
+    attack:  '隣接6方向 射程1',
+    terrain: '直線1マス 地形変形',
+    skill:   '🛡 押し出し: 隣接する駒を1マス押す',
+    trait:   '高さ2の重装甲。周囲6マスに威圧圏(ZOC)を形成し、敵の移動力を-1する。',
   },
 };
 
@@ -494,9 +616,12 @@ function updateInfoPanel(piece, def, layer) {
   document.getElementById('info-owner').textContent   = `${owner} | ${layer === 'surface' ? '表層' : '深層'}`;
   document.getElementById('info-hp').textContent      = `HP ${piece.hp} / ${piece.maxHp}   高さ ${def.height}`;
 
-  const trapped  = piece.trapped  ? ' ⚠ 穴に捕まっています' : '';
-  const reviving = piece.reviving ? ` ⚠ 復活まで${piece.reviveTimer}T` : '';
-  document.getElementById('info-status').textContent = trapped || reviving || '';
+  const trapped    = piece.trapped    ? '⚠ 穴に捕まっています' : '';
+  const reviving   = piece.reviving   ? `⚠ 復活まで${piece.reviveTimer}T` : '';
+  const slowed     = piece.vineSlowed ? '🌿 蔦減速（次ターン移動-1・スキル不可）' : '';
+  const surrounded = piece.surrounded ? '🔴 包囲状態（移動不可）' : '';
+  document.getElementById('info-status').textContent =
+    [trapped, reviving, slowed, surrounded].filter(Boolean).join(' / ') || '';
 
   document.getElementById('info-move').textContent    = info.move;
   document.getElementById('info-attack').textContent  = info.attack;
@@ -527,33 +652,57 @@ function selectPiece(layer, r, c) {
   const lbl   = CONFIG.PIECE_LABEL[piece.type];
 
   // Enable/disable action buttons (synced to both desktop and mobile)
-  setActBtn('btn-move',    { disabled: piece.reviving });
-  setActBtn('btn-attack',  { disabled: def.atkRange === 0 || piece.reviving });
   setActBtn('btn-terrain', { disabled: def.terrainRange === 0 || piece.reviving });
 
   const canNormalTransit = !!getTransitDest(G, layer, r, c);
-  const canFreeEmerge   = layer === 'depth' && hasDCP(G, 'p1', 'FREE_EMERGE');
-  setActBtn('btn-transit', { disabled: !canNormalTransit && !canFreeEmerge });
+  setActBtn('btn-transit', { disabled: !canNormalTransit });
 
   const skillName = getSkillName(piece.type);
-  setActBtn('btn-skill', { disabled: !skillName || piece.reviving, text: skillName || 'スキル' });
+  const isRoller = canUseRoller(piece.type);
+  const skillBlocked = piece.vineSlowed;
+  const hasCharging = !!piece.chargingSkill;
+  setActBtn('btn-skill', {
+    disabled: (!skillName && !isRoller) || piece.reviving || skillBlocked || (isRoller && hasCharging),
+    text: isRoller ? 'ローラー' : (skillName || 'スキル'),
+  });
+
+  // Vine (Engineer only)
+  setActBtn('btn-vine',    { disabled: !canUseVine(piece.type) || piece.reviving });
+  setActBtn('btn-react',   { disabled: def.atkRange === 0 || piece.reviving });
+
+  // Show reserved move info if piece has one
+  if (piece.reservedMove) {
+    const rv = piece.reservedMove;
+    setMessage(`${lbl}: 予約移動中 → (${rv.toR},${rv.toC})  ※次ターン自動移動`);
+    return;
+  }
+  // Show charging info
+  if (piece.chargingSkill) {
+    const tn = piece.chargingSkill.subtype === 'light' ? '軽' : '重';
+    setMessage(`${lbl}: 🛞${tn}ローラーチャージ中 — 残り${piece.chargingSkill.turnsLeft}T`);
+  }
 
   // ── Auto-enter MOVE mode ─────────────────────────────────────────
   G.actionMode = 'MOVE';
   if (piece.trapped) {
     G.validCells  = [{ r, c, layer }];
     G.attackCells = [];
-    setActBtn('btn-move', { text: '脱出' });
+    reserveCells  = [];
     setMessage(`${lbl} が穴に捕まっています — 緑マスをクリックで脱出`);
+  } else if (piece.reviving || piece.surrounded) {
+    G.validCells  = [];
+    G.attackCells = [];
+    reserveCells  = [];
+    setMessage(`${lbl} 選択 — ${piece.reviving ? '復活待機中' : '包囲状態（移動不可）'}`);
   } else {
     G.validCells  = getValidMoves(G, layer, r, c);
     G.attackCells = getValidAttacks(G, layer, r, c);
-    setActBtn('btn-move', { text: '移動' });
-    setMessage(`${lbl} 選択 — 緑: 移動${G.validCells.length}  赤: 攻撃${G.attackCells.length}  ボタンで他アクション`);
+    reserveCells  = (piece.reservedMove) ? [] : getValidReserveMoves(G, layer, r, c);
+    Renderer.setReserveCells(reserveCells);
+    const zocNote = piece.vineSlowed ? ' ⚠蔦減速' : '';
+    setMessage(`${lbl} 選択 — 緑:移動${G.validCells.length} 赤:攻撃${G.attackCells.length} 水:2T予約${reserveCells.length}${zocNote}`);
   }
-
-  document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
-  setActBtn('btn-move', { active: true });
+  Renderer.setReserveCells(reserveCells);
 
   // Update info panel
   updateInfoPanel(piece, def, layer);
@@ -593,15 +742,21 @@ function deselect() {
   G.validCells  = [];
   G.attackCells = [];
   G.terrainDir  = null;
-  selectedHandPiece = null;
-  currentSkillMode  = null;
-  setActBtn('btn-move',    { disabled: true, active: false, text: '移動' });
-  setActBtn('btn-attack',  { disabled: true, active: false });
+  selectedHandPiece  = null;
+  currentSkillMode   = null;
+  reserveDestination = null;
+  reserveCells       = [];
+  Renderer.setReserveCells([]);
   setActBtn('btn-terrain', { disabled: true, active: false });
   setActBtn('btn-transit', { disabled: true, active: false });
   setActBtn('btn-skill',   { disabled: true, active: false, text: 'スキル' });
+  setActBtn('btn-vine',    { disabled: true, active: false });
+  setActBtn('btn-react',   { disabled: true, active: false });
   document.getElementById('terrain-menu').style.display     = 'none';
   document.getElementById('mob-terrain-menu').style.display = 'none';
+  document.getElementById('roller-menu').style.display      = 'none';
+  // 地形ボタン選択状態リセット
+  document.querySelectorAll('.terrain-opt').forEach(b => b.classList.remove('selected'));
   clearInfoPanel();
   setMessage('駒をクリックして選択してください');
 }
@@ -611,20 +766,40 @@ function setActionMode(mode) {
   if (!G.selected) return;
   const { layer, r, c } = G.selected;
 
-  // Terrain: need to know direction first
-  if (mode === 'TERRAIN' && G.terrainDir === null) {
+  // Terrain: show direction menu and keep it visible
+  if (mode === 'TERRAIN') {
     document.getElementById('terrain-menu').style.display = 'flex';
-    return;
+    document.getElementById('mob-terrain-menu').style.display = 'flex';
+    if (G.terrainDir === null) {
+      // 方向未選択 → 選択待ちのまま
+      G.actionMode = 'TERRAIN';
+      G.validCells = [];
+      return;
+    }
+    // 方向選択済みなら即座に計算
   }
 
   G.actionMode  = mode;
   G.attackCells = [];  // hide simultaneous attack highlights once a specific mode is chosen
   currentSkillMode = null;
-  document.getElementById('terrain-menu').style.display = 'none';
 
   if (mode === 'SKILL') {
     const piece = getPieceAt(G, layer, r, c);
     if (!piece) return;
+    // ROLLER: show type selection menu, then direction targets
+    if (piece.type === 'ROLLER') {
+      if (!currentSkillMode?.startsWith('ROLLER')) {
+        document.getElementById('roller-menu').style.display = 'flex';
+        return;
+      }
+      // Direction selection mode
+      G.validCells = getValidRollerDirections(G, layer, r, c);
+      const tn = currentSkillMode === 'ROLLER_LIGHT' ? '軽' : '重';
+      setMessage(`🛞${tn}ローラーの発射方向を選んでください (隣接マス)`);
+      document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+      setActBtn('btn-skill', { active: true });
+      return;
+    }
     if (piece.type === 'WARDEN') {
       G.validCells = getValidPushTargets(G, layer, r, c);
       currentSkillMode = 'PUSH';
@@ -652,12 +827,12 @@ function setActionMode(mode) {
   if (mode === 'MOVE') {
     const piece = getPieceAt(G, layer, r, c);
     if (piece?.trapped) {
-      // Escape: show escape in place as valid "move"
       G.validCells = [{ r, c, layer }];
       setMessage('選択したマスを確認して脱出します');
     } else {
       G.validCells = getValidMoves(G, layer, r, c);
-      setMessage(`移動先を選んでください (${G.validCells.length}箇所)`);
+      const zocNote = piece?.vineSlowed ? ' ⚠蔦減速' : piece?.surrounded ? ' ⚠包囲中' : '';
+      setMessage(`移動先を選んでください (${G.validCells.length}箇所)${zocNote}`);
     }
   } else if (mode === 'ATTACK') {
     G.validCells = getValidAttacks(G, layer, r, c);
@@ -666,12 +841,37 @@ function setActionMode(mode) {
     G.validCells = getValidTerrainTargets(G, layer, r, c);
     const dirLabel = G.terrainDir === 'up' ? '凸（壁）' : '凹（穴）';
     setMessage(`${dirLabel} の地形変形先を選んでください (${G.validCells.length}箇所)`);
+  } else if (mode === 'VINE') {
+    G.validCells = getValidVineTargets(G, layer, r, c);
+    const p1v = G.p1Vines.length;
+    setMessage(`🌿蔦の設置先を選んでください (${G.validCells.length}箇所) 現在${p1v}/${CONFIG.VINE_MAX}本`);
+    document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+    setActBtn('btn-vine', { active: true });
+    return;
+  } else if (mode === 'REACT') {
+    G.validCells = getValidReactTargets(G, layer, r, c);
+    setMessage(`⚡反応監視するマスを選んでください — 敵がそこへ移動したら自動攻撃 (${G.validCells.length}箇所)`);
+    document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+    setActBtn('btn-react', { active: true });
+    return;
+  } else if (mode === 'RESERVE') {
+    // Step 1: choose 2-turn destination
+    reserveDestination = null;
+    G.validCells = getValidReserveMoves(G, layer, r, c);
+    setMessage(`🔵予約移動先を選んでください（2ターン先まで） (${G.validCells.length}箇所)`);
+    document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+    return;
+  } else if (mode === 'RESERVE_VIA') {
+    // Step 2: choose intermediate waypoint
+    if (!reserveDestination) return;
+    G.validCells = getValidReserveVia(G, layer, r, c, reserveDestination.r, reserveDestination.c);
+    setMessage(`🔵経由マスを選んでください → (${reserveDestination.r},${reserveDestination.c}) (${G.validCells.length}箇所)`);
+    return;
   }
 
   // Highlight action mode buttons
   document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
-  const activeId = mode === 'MOVE' ? 'btn-move' : mode === 'ATTACK' ? 'btn-attack' : 'btn-terrain';
-  setActBtn(activeId, { active: true });
+  if (mode === 'TERRAIN') setActBtn('btn-terrain', { active: true });
 }
 
 // ── Queue action ──────────────────────────────────────────────────
@@ -684,7 +884,17 @@ function queueAction(tr, tc, tLayer) {
   if (!piece) return;
 
   let actionType = G.actionMode;
-  if (G.actionMode === 'SKILL') actionType = 'SKILL_' + currentSkillMode;
+  if (G.actionMode === 'SKILL')       actionType = 'SKILL_' + currentSkillMode;
+  if (G.actionMode === 'VINE')        actionType = 'SKILL_VINE';
+  if (G.actionMode === 'REACT')       actionType = 'REACT';
+  if (G.actionMode === 'RESERVE') {
+    // Step 1: destination selected — switch to via selection
+    reserveDestination = { r: tr, c: tc, layer: tLayer ?? layer };
+    G.actionMode = 'RESERVE_VIA';
+    setActionMode('RESERVE_VIA');
+    return;
+  }
+  if (G.actionMode === 'RESERVE_VIA') actionType = 'RESERVE_SET';
 
   const action = {
     owner: 'p1',
@@ -698,6 +908,16 @@ function queueAction(tr, tc, tLayer) {
   // Special case: escape from trap
   if (G.actionMode === 'MOVE' && piece.trapped && tr === r && tc === c) {
     action.type = 'ESCAPE';
+  }
+
+  // Reserve: store on piece directly (consumes 1 action slot, auto-moves next turn)
+  if (actionType === 'RESERVE_SET' && reserveDestination) {
+    piece.reservedMove = {
+      toR: reserveDestination.r, toC: reserveDestination.c, toLayer: reserveDestination.layer,
+      viaR: tr, viaC: tc, viaLayer: tLayer ?? layer,
+    };
+    action.type = 'RESERVE_SET';
+    reserveDestination = null;
   }
 
   G.playerActions.push(action);
@@ -754,17 +974,16 @@ function fillSlot(idx, action, piece) {
   if (action.type === 'SKILL_SNIPE')  desc = `${lbl} 狙撃 (${action.toR},${action.toC})`;
   if (action.type === 'SKILL_SWAP')   desc = `${lbl} 位置交換 (${action.toR},${action.toC})`;
   if (action.type === 'SKILL_REPAIR') desc = `${lbl} 修繕 (${action.toR},${action.toC})`;
+  if (action.type === 'SKILL_VINE')          desc = `🌿蔦設置 (${action.toR},${action.toC})`;
+  if (action.type === 'REACT')               desc = `⚡反応待機 (${action.toR},${action.toC})`;
+  if (action.type === 'RESERVE_SET')         desc = `🔵予約移動 → (${piece.reservedMove?.toR ?? '?'},${piece.reservedMove?.toC ?? '?'})`;
+  if (action.type === 'SKILL_ROLLER_LIGHT')  desc = `🛞軽ローラーチャージ`;
+  if (action.type === 'SKILL_ROLLER_HEAVY')  desc = `🛞重ローラーチャージ`;
 
   textEl.textContent   = desc;
   slotEl.classList.add('filled');
   clearEl.style.display = 'inline';
 
-  // スマホヘッダーのスロット表示も更新
-  const mobEl = document.getElementById(`mob-slot-${idx}`);
-  if (mobEl) {
-    mobEl.textContent = `${idx === 0 ? '①' : '②'} ${desc}`;
-    mobEl.classList.add('filled');
-  }
 }
 
 function clearSlot(idx) {
@@ -793,13 +1012,7 @@ function clearSlots() {
     slotEl.querySelector('.slot-text').textContent = '未設定';
     slotEl.classList.remove('filled');
     slotEl.querySelector('.slot-clear').style.display = 'none';
-    // スマホヘッダーのスロット表示もリセット
-    const mobEl = document.getElementById(`mob-slot-${i}`);
-    if (mobEl) {
-      mobEl.textContent = `${i === 0 ? '①' : '②'} 未設定`;
-      mobEl.classList.remove('filled');
     }
-  }
   document.getElementById('btn-confirm').disabled = true;
 }
 
@@ -811,6 +1024,24 @@ function confirmTurn() {
   setMessage('CPU思考中…');
 
   setTimeout(() => {
+    // Auto-add reserved moves for P1 pieces
+    for (const layer of ['surface','depth']) {
+      for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
+        for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
+          const p = G[layer][r][c].piece;
+          if (p && p.owner === 'p1' && p.reservedMove) {
+            const rv = p.reservedMove;
+            G.playerActions.push({
+              owner: 'p1', type: 'RESERVED_MOVE', pieceId: p.id,
+              fromLayer: layer, fromR: r, fromC: c,
+              toLayer: rv.toLayer, toR: rv.toR, toC: rv.toC,
+              viaLayer: rv.viaLayer, viaR: rv.viaR, viaC: rv.viaC,
+            });
+          }
+        }
+      }
+    }
+
     const snapshot   = snapshotPositions(G);
     const cpuActions = CpuAI.getCpuActions(G);
 
@@ -919,28 +1150,25 @@ function updateUI() {
     }
   }
 
-  // ── B1/B2 制圧者 ───────────────────────────────────────────────
-  const b0ctrl = G.occMeta?.B0;
-  setBar('occ-B0-p1-bar', b0ctrl === 'p1' ? 1 : 0, 1);
-  setBar('occ-B0-p2-bar', b0ctrl === 'p2' ? 1 : 0, 1);
-  document.getElementById('occ-B0-count').textContent =
-    b0ctrl === 'p1' ? 'あなた' : b0ctrl === 'p2' ? 'CPU' : '—';
-
-  const b1ctrl = G.occMeta?.B1;
-  setBar('occ-B1-p1-bar', b1ctrl === 'p1' ? 1 : 0, 1);
-  setBar('occ-B1-p2-bar', b1ctrl === 'p2' ? 1 : 0, 1);
-  document.getElementById('occ-B1-count').textContent =
-    b1ctrl === 'p1' ? 'あなた' : b1ctrl === 'p2' ? 'CPU' : '—';
-
-  document.getElementById('b-move-timer').textContent = `B移動: ${G.bMoveIn}T後`;
-
-  // ── DCP状態 ────────────────────────────────────────────────────
-  for (const dcp of CONFIG.DCP) {
-    const ctrl = G.dcpControl[dcp.key];
-    const el = document.getElementById(`dcp-${dcp.key}`);
-    if (!el) continue;
-    el.textContent = ctrl === 'p1' ? 'あなた' : ctrl === 'p2' ? 'CPU' : '—';
-    el.style.color = ctrl === 'p1' ? '#4fc3f7' : ctrl === 'p2' ? '#ef5350' : '#888';
+  // ── エコーポイント状態 ──────────────────────────────────────────
+  const ep = G.echoPoint;
+  const epSEl = document.getElementById('echo-surface-count');
+  const epDEl = document.getElementById('echo-depth-count');
+  const epHEl = document.getElementById('echo-hold-timer');
+  const epCEl = document.getElementById('echo-cycle-timer');
+  if (ep?.active) {
+    const sc = G.occMeta?.echoSurface;
+    const dc = G.occMeta?.echoDepth;
+    if (epSEl) {
+      epSEl.textContent = sc === 'p1' ? 'あなた' : sc === 'p2' ? 'CPU' : '—';
+      epSEl.style.color = sc === 'p1' ? '#4fc3f7' : sc === 'p2' ? '#ef5350' : '#888';
+    }
+    if (epDEl) {
+      epDEl.textContent = dc === 'p1' ? 'あなた' : dc === 'p2' ? 'CPU' : '—';
+      epDEl.style.color = dc === 'p1' ? '#4fc3f7' : dc === 'p2' ? '#ef5350' : '#888';
+    }
+    if (epHEl) epHEl.textContent = `保持: ${ep.holdTimer}/${CONFIG.ECHO_HOLD_TURNS}T`;
+    if (epCEl) epCEl.textContent = ep.cycleExpired ? 'サイクル: 延長中' : `サイクル残: ${ep.cycleTimer}T`;
   }
 
   // ── 勝利警告 ───────────────────────────────────────────────────

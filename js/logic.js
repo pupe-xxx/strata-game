@@ -44,9 +44,13 @@ function randomOccAPosition(state) {
     for (let col = 0; col < BS; col++) {
       const cells = occACells(row, col);
       if (!cells.every(cl => isValidCell(cl.r, cl.c))) continue;
-      const noB = state.occB.every(bp =>
-        bCells(bp).every(b => !cells.some(cl => cl.r === b.r && cl.c === b.c)));
-      if (noB) candidates.push({ r: row, c: col });
+      const ep = state.echoPoint;
+      const noEcho = !ep.active || (
+        (ep.surfaceR !== row || ep.surfaceC !== col) &&
+        (ep.surfaceR !== row || ep.surfaceC !== col + 1) &&
+        (ep.surfaceR !== row + 1 || ep.surfaceC !== col)
+      );
+      if (noEcho) candidates.push({ r: row, c: col });
     }
   }
   if (candidates.length === 0) return { r: R, c: R };
@@ -58,24 +62,37 @@ function randomOccAPosition(state) {
 /** Can a piece of given height pass THROUGH this terrain (not land on it)? */
 function isPassable(terrain, pieceHeight) {
   if (terrain.type === 'flat') return true;
+  if (terrain.type === 'vine') return true;           // vine is passable (slows but doesn't block)
   if (terrain.type === 'wall') {
-    if (terrain.stage === 3) return false;            // gate blocks movement
+    if (terrain.stage === 3) return false;
     if (terrain.stage >= 2 && pieceHeight < 3) return false;
     if (terrain.stage >= 1 && pieceHeight < 2) return false;
     return true;
   }
-  if (terrain.type === 'hole') return true;           // holes are enterable (trapping)
+  if (terrain.type === 'hole') return true;
   return true;
 }
 
 /** Can a piece land on (end movement at) this terrain? */
 function isLandable(terrain, pieceHeight) {
+  if (terrain.type === 'vine') return true;           // can land on vine (gets slowed next turn)
   if (terrain.type === 'wall') {
-    if (terrain.stage === 3) return false;            // gate: use transit action instead
+    if (terrain.stage === 3) return false;
     if (terrain.stage >= 2 && pieceHeight < 3) return false;
     if (terrain.stage >= 1 && pieceHeight < 2) return false;
   }
   return true;
+}
+
+/** Remove a vine at the given position and update owner's vine list */
+function removeVineAt(state, layer, r, c) {
+  const cell = state[layer]?.[r]?.[c];
+  if (!cell || cell.terrain.type !== 'vine') return;
+  const owner = cell.terrain.placedBy;
+  const vines = owner === 'p1' ? state.p1Vines : state.p2Vines;
+  const idx = vines.findIndex(v => v.r === r && v.c === c && v.layer === layer);
+  if (idx !== -1) vines.splice(idx, 1);
+  cell.terrain = { type: 'flat', stage: 0 };
 }
 
 /** Apply terrain effect on landing (trap for holes) */
@@ -86,6 +103,72 @@ function applyLandingEffect(piece, terrain) {
   }
 }
 
+// ── ZOC (Zone of Control) ─────────────────────────────────────────
+
+/** Returns a Set of "${r},${c}" strings that are under enemy ZOC for the given owner */
+function computeZOCCells(state, layer, forOwner) {
+  const enemyOwner = forOwner === 'p1' ? 'p2' : 'p1';
+  const zoc = new Set();
+  for (let er = 0; er < BS; er++) {
+    for (let ec = 0; ec < BS; ec++) {
+      const p = state[layer][er][ec].piece;
+      if (!p || p.owner !== enemyOwner || p.reviving) continue;
+      if (p.type === 'WARDEN') {
+        for (const [dr, dc] of HEX6) {
+          const nr = er + dr, nc = ec + dc;
+          if (isValidCell(nr, nc)) zoc.add(`${nr},${nc}`);
+        }
+      } else if (p.type === 'RANGER') {
+        for (const [dr, dc] of HEX6) {
+          for (let step = 1; step <= CONFIG.PIECES.RANGER.atkRange; step++) {
+            const nr = er + dr * step, nc = ec + dc * step;
+            if (!isValidCell(nr, nc)) break;
+            zoc.add(`${nr},${nc}`);
+            const t = state[layer][nr][nc].terrain;
+            if (t.type === 'wall' && t.stage >= 2) break;
+            if (state[layer][nr][nc].piece) break;
+          }
+        }
+      }
+    }
+  }
+  return zoc;
+}
+
+function isInEnemyZOC(state, layer, r, c, owner) {
+  return computeZOCCells(state, layer, owner).has(`${r},${c}`);
+}
+
+/** Count how many distinct enemy pieces have ZOC over (r,c) */
+function countZOCSources(state, layer, r, c, owner) {
+  const enemyOwner = owner === 'p1' ? 'p2' : 'p1';
+  let count = 0;
+  for (let er = 0; er < BS; er++) {
+    for (let ec = 0; ec < BS; ec++) {
+      const p = state[layer][er][ec].piece;
+      if (!p || p.owner !== enemyOwner || p.reviving) continue;
+      if (p.type === 'WARDEN' && hexDist(r, c, er, ec) === 1) { count++; continue; }
+      if (p.type === 'RANGER') {
+        const dr = r - er, dc = c - ec;
+        const adx = Math.abs(dr), ady = Math.abs(dc);
+        const isOrtho = (adx === 0) !== (ady === 0);
+        if (!isOrtho) continue;
+        const stepR = Math.sign(dr), stepC = Math.sign(dc);
+        let blocked = false;
+        for (let s = 1; s <= CONFIG.PIECES.RANGER.atkRange; s++) {
+          const mr = er + stepR * s, mc = ec + stepC * s;
+          if (mr === r && mc === c) { if (!blocked) count++; break; }
+          if (!isValidCell(mr, mc)) break;
+          const t = state[layer][mr][mc].terrain;
+          if (t.type === 'wall' && t.stage >= 2) break;
+          if (state[layer][mr][mc].piece) break;
+        }
+      }
+    }
+  }
+  return count;
+}
+
 // ── Valid moves ───────────────────────────────────────────────────
 
 function getValidMoves(state, layer, r, c) {
@@ -93,52 +176,104 @@ function getValidMoves(state, layer, r, c) {
   if (!cell?.piece) return [];
   const piece = cell.piece;
   if (piece.reviving) return [];
-  if (piece.trapped) return [];  // trapped pieces can't move until they escape
+  if (piece.trapped) return [];
+  if (piece.surrounded) return [];
 
   const def = CONFIG.PIECES[piece.type];
+
+  // Stage-2 wall: melee pieces are immobile (can't move off the wall)
+  const myT = cell.terrain;
+  if (myT.type === 'wall' && myT.stage >= 2 && def.atkRange <= 1) return [];
   const isFlying = def.height === 3;
   const dirs = def.moveDir === 'ortho' ? ORTHO : ALL8;
-  const valid = [];
 
-  if (def.moveDist === 1) {
+  // Compute effective move distance (ZOC and vineSlowed each reduce by 1)
+  let effectiveDist = def.moveDist;
+  if (piece.vineSlowed) effectiveDist = Math.max(1, effectiveDist - 1);
+  if (isInEnemyZOC(state, layer, r, c, piece.owner)) effectiveDist = Math.max(1, effectiveDist - 1);
+
+  const valid = [];
+  const seen = new Set();
+
+  if (effectiveDist === 1) {
     for (const [dr, dc] of dirs) {
       const nr = r + dr, nc = c + dc;
       if (!inBounds(nr, nc)) continue;
       const target = state[layer][nr][nc];
-      if (target.piece) continue;  // occupied
-      if (isFlying) { valid.push({ r:nr, c:nc, layer }); continue; }
-      if (!isPassable(target.terrain, def.height)) continue;
-      if (!isLandable(target.terrain, def.height)) continue;
-      valid.push({ r:nr, c:nc, layer });
+      if (target.piece) continue;
+      if (isFlying || (isPassable(target.terrain, def.height) && isLandable(target.terrain, def.height))) {
+        const k = `${nr},${nc}`;
+        if (!seen.has(k)) { seen.add(k); valid.push({ r:nr, c:nc, layer }); }
+      }
     }
   } else {
-    // Multi-step (STRIKER: 2 ortho steps, can stop at 1 or 2)
+    // Slide up to effectiveDist hexes in a straight line per direction
     for (const [dr, dc] of dirs) {
-      // Step 1
-      const r1 = r + dr, c1 = c + dc;
-      if (!inBounds(r1, c1)) continue;
-      const cell1 = state[layer][r1][c1];
-      if (!cell1.piece) {
-        if (isFlying || (isPassable(cell1.terrain, def.height) && isLandable(cell1.terrain, def.height))) {
-          valid.push({ r:r1, c:c1, layer });
-          // Step 2 (only if step 1 cell is truly empty to pass through)
-          const r2 = r1 + dr, c2 = c1 + dc;
-          if (!inBounds(r2, c2)) continue;
-          const cell2 = state[layer][r2][c2];
-          if (!cell2.piece) {
-            if (isFlying || (isPassable(cell2.terrain, def.height) && isLandable(cell2.terrain, def.height))) {
-              valid.push({ r:r2, c:c2, layer });
-            }
-          }
+      for (let step = 1; step <= effectiveDist; step++) {
+        const nr = r + dr * step, nc = c + dc * step;
+        if (!inBounds(nr, nc)) break;
+        const ncell = state[layer][nr][nc];
+        if (ncell.piece) break;  // blocked by piece, stop this direction
+        if (!isFlying && !isPassable(ncell.terrain, def.height)) break;
+        if (isFlying || isLandable(ncell.terrain, def.height)) {
+          const k = `${nr},${nc}`;
+          if (!seen.has(k)) { seen.add(k); valid.push({ r:nr, c:nc, layer }); }
         }
       }
-      // If step1 blocked by piece, no step 2 either
     }
   }
 
-  // PHANTOM: also add cross-layer emerge from current position if on emergence point
-  // (handled separately via transit action)
+  return valid;
+}
 
+// ── Valid vine placement targets ──────────────────────────────────
+
+function getValidVineTargets(state, layer, r, c) {
+  const cell = getCell(state, layer, r, c);
+  if (!cell?.piece) return [];
+  const piece = cell.piece;
+  if (piece.reviving) return [];
+  const valid = [];
+  const seen = new Set();
+  for (const [dr, dc] of HEX6) {
+    for (let step = 1; step <= CONFIG.VINE_RANGE; step++) {
+      const nr = r + dr * step, nc = c + dc * step;
+      if (!inBounds(nr, nc)) break;
+      const target = state[layer][nr][nc];
+      if (target.terrain.type === 'wall' && target.terrain.stage >= 2) break;
+      if (target.piece) break;  // can't vine through occupied cells
+      if (target.terrain.type === 'flat' || target.terrain.type === 'vine') {
+        const k = `${nr},${nc}`;
+        if (!seen.has(k)) { seen.add(k); valid.push({ r: nr, c: nc, layer }); }
+      }
+    }
+  }
+  return valid;
+}
+
+// ── Valid react watch targets ─────────────────────────────────────
+
+function getValidReactTargets(state, layer, r, c) {
+  const cell = getCell(state, layer, r, c);
+  if (!cell?.piece) return [];
+  const piece = cell.piece;
+  if (piece.reviving) return [];
+  const def = CONFIG.PIECES[piece.type];
+  if (def.atkRange === 0) return [];
+  // Any cell in attack range — watching for enemy to move there
+  const valid = [];
+  const seen = new Set();
+  for (const [dr, dc] of HEX6) {
+    for (let step = 1; step <= def.atkRange; step++) {
+      const nr = r + dr * step, nc = c + dc * step;
+      if (!inBounds(nr, nc)) break;
+      const target = state[layer][nr][nc];
+      if (target.terrain.type === 'wall' && target.terrain.stage >= 2) break;
+      const k = `${nr},${nc}`;
+      if (!seen.has(k)) { seen.add(k); valid.push({ r: nr, c: nc, layer }); }
+      if (target.piece) break;
+    }
+  }
   return valid;
 }
 
@@ -152,33 +287,51 @@ function getValidAttacks(state, layer, r, c) {
   const def = CONFIG.PIECES[piece.type];
   if (def.atkRange === 0) return [];
 
-  const valid = [];
-  const dirs = def.moveDir === 'ortho' ? ORTHO : ALL8;
+  // Wall elevation: piece STANDING ON a wall cell gets attack bonus
+  const myTerrain = cell.terrain;
+  let atkBonus = 0;
+  if (myTerrain.type === 'wall' && myTerrain.stage >= 1) {
+    atkBonus = myTerrain.stage;  // stage1 → +1, stage2 → +2
+  }
+  // Stage-2 wall immobility: melee cannot attack at all
+  if (myTerrain.type === 'wall' && myTerrain.stage >= 2 && def.atkRange <= 1) {
+    return [];
+  }
+  // Vine ally bonus: +1 if on own vine
+  if (myTerrain.type === 'vine' && myTerrain.placedBy === piece.owner) {
+    atkBonus = Math.max(atkBonus, 1);
+  }
+  const effectiveRange = def.atkRange + atkBonus;
 
-  for (const [dr, dc] of dirs) {
-    for (let step = 1; step <= def.atkRange; step++) {
+  const valid = [];
+
+  for (const [dr, dc] of HEX6) {
+    // Normal range + 1 extra step to allow hitting elevated targets
+    for (let step = 1; step <= effectiveRange + 1; step++) {
       const nr = r + dr * step, nc = c + dc * step;
       if (!inBounds(nr, nc)) break;
       const target = state[layer][nr][nc];
 
-      // Wall blocks line of sight (simplified)
       if (target.terrain.type === 'wall' && target.terrain.stage >= 1) {
-        // Stage 1 wall: blocks height-1 attacker vs height-1 target, but not vs height 2+
         if (target.terrain.stage >= 2) break;
-        // Stage 1: still break unless target would be height 2 (checked after)
-        if (!target.piece) { break; }  // wall with no piece on it blocks
+        if (!target.piece) break;
       }
 
       if (target.piece) {
-        if (target.piece.owner !== piece.owner) {
-          valid.push({ r:nr, c:nc, layer });
+        if (target.piece.owner !== piece.owner && !target.piece.reviving) {
+          // At step <= effectiveRange: always valid
+          // At step == effectiveRange+1: only valid if target is elevated
+          const targetElevated = target.terrain.type === 'wall' && target.terrain.stage >= 1;
+          if (step <= effectiveRange || targetElevated) {
+            valid.push({ r:nr, c:nc, layer });
+          }
         }
-        break;  // can't shoot through pieces
+        break;
       }
     }
   }
 
-  // PHANTOM cross-layer attack: attack same coordinate in other layer
+  // PHANTOM cross-layer attack
   if (piece.type === 'PHANTOM') {
     const other = layer === 'surface' ? 'depth' : 'surface';
     const otherCell = state[other][r][c];
@@ -200,52 +353,46 @@ function getValidTerrainTargets(state, layer, r, c) {
   const def = CONFIG.PIECES[piece.type];
   if (def.terrainRange === 0) return [];
 
+  const seen = new Set();
   const valid = [];
-  const dirs = ORTHO;   // terrain always orthogonal for range checks
 
-  for (const [dr, dc] of dirs) {
+  // Own cell: build wall under yourself (wall elevation mechanic)
+  const ownT = cell.terrain;
+  if (ownT.type === 'flat' || (ownT.type === 'wall' && ownT.stage < 3)) {
+    seen.add(`${r},${c}`);
+    valid.push({ r, c, layer });
+  }
+
+  for (const [dr, dc] of HEX6) {
     for (let step = 1; step <= def.terrainRange; step++) {
       const nr = r + dr * step, nc = c + dc * step;
       if (!inBounds(nr, nc)) break;
       const target = state[layer][nr][nc];
-
-      // Can't deform if another piece is occupying the cell (or if terrain is already gate-stage)
       if (target.terrain.stage < 3) {
-        valid.push({ r:nr, c:nc, layer });
+        const k = `${nr},${nc}`;
+        if (!seen.has(k)) { seen.add(k); valid.push({ r:nr, c:nc, layer }); }
       }
-      // Terrain blocked by walls/pieces (range line-of-sight broken by pieces)
       if (target.piece) break;
     }
   }
 
-  // Also include diagonal for SCULPTOR (moveDir:'all')
-  if (def.moveDir === 'all') {
-    for (const [dr, dc] of [[1,1],[1,-1],[-1,1],[-1,-1]]) {
-      const nr = r + dr, nc = c + dc;
-      if (!inBounds(nr, nc)) continue;
-      const target = state[layer][nr][nc];
-      if (target.terrain.stage < 3) valid.push({ r:nr, c:nc, layer });
-    }
-  }
-
-  // Deduplicate
-  const seen = new Set();
-  return valid.filter(v => {
-    const k = `${v.r},${v.c}`;
-    if (seen.has(k)) return false;
-    seen.add(k); return true;
-  });
+  return valid;
 }
 
 // ── Terrain deformation ───────────────────────────────────────────
 
 /** Change terrain one stage in direction 'up' (wall) or 'down' (hole).
- *  β DCP bonus: changes 2 stages at once. Applies membrane effect. Returns log string. */
+ *  Applies membrane effect. Returns log string. */
 function applyTerrainChange(state, layer, r, c, dir, owner) {
-  // β DCP: TERRAIN_BOOST lets this piece's terrain change 2 stages instead of 1
-  const stages = (owner && hasDCP(state, owner, 'TERRAIN_BOOST')) ? 2 : 1;
+  const stages = 1;
   const cell  = state[layer][r][c];
-  const t     = cell.terrain;
+
+  // If vine on this cell: remove vine first, then apply terrain change as if flat
+  if (cell.terrain.type === 'vine') {
+    removeVineAt(state, layer, r, c);
+  }
+
+  const t = cell.terrain;
   let changed = false;
   let logMsg  = '';
 
@@ -276,6 +423,16 @@ function applyTerrainChange(state, layer, r, c, dir, owner) {
     logMsg = dir === 'up'
       ? `(${r},${c}) 凸${t.type==='flat'?'平地':`${t.stage}段階`}`
       : `(${r},${c}) 凹${t.type==='flat'?'平地':`${t.stage}段階`}`;
+
+    // Fall damage: piece on this cell when wall is reduced
+    if (dir === 'down' && cell.piece) {
+      const standingPiece = cell.piece;
+      const wasOnWall = (t.type === 'wall' || t.type === 'flat');
+      if (wasOnWall) {
+        standingPiece.hp = Math.max(0, standingPiece.hp - 1);
+        logMsg += ` [${CONFIG.PIECE_LABEL[standingPiece.type]}落下-1HP]`;
+      }
+    }
   }
 
   if (!changed) return null;
@@ -327,52 +484,86 @@ function getTransitDest(state, layer, r, c) {
   return { layer: other, r, c };
 }
 
-// ── B-point helpers ──────────────────────────────────────────────
+// ── Echo Point helpers ────────────────────────────────────────────
 
-/** Bポイントの2×2エリアを返す（layer付き） */
-function bCells(bp) {
-  const layer = bp.layer ?? 'surface';
-  return [
-    { r: bp.r,   c: bp.c,   layer },
-    { r: bp.r,   c: bp.c+1, layer },
-    { r: bp.r+1, c: bp.c,   layer },
-    { r: bp.r+1, c: bp.c+1, layer },
-  ];
-}
+/** エコーポイントをランダム生成。表層と深層に各1マス、距離2〜ECHO_MAX_DISTの範囲 */
+function generateEchoPoints(state) {
+  const ep  = state.echoPoint;
+  const NR  = CONFIG.ECHO_NEUTRAL_R;
+  const MAX = CONFIG.ECHO_MAX_DIST;
+  let found = false;
 
-/** BポイントをランダムなOCC_A・他B非重複位置へ移動 */
-function moveBPoints(state) {
-  const BS   = CONFIG.BOARD_SIZE;
-  const newB = state.occB.map(() => null);
+  for (let attempt = 0; attempt < 400 && !found; attempt++) {
+    const sr = R - NR + Math.floor(Math.random() * (2 * NR + 1));
+    const sc = R - NR + Math.floor(Math.random() * (2 * NR + 1));
+    if (!isValidCell(sr, sc)) continue;
 
-  for (let bi = 0; bi < state.occB.length; bi++) {
-    let placed = false;
-    for (let attempt = 0; attempt < 100 && !placed; attempt++) {
-      // 端から2マス以上内側に収める（2×2なので最大 BS-3）
-      const nr = 1 + Math.floor(Math.random() * (BS - 4));
-      const nc = 1 + Math.floor(Math.random() * (BS - 4));
-      const cands = bCells({ r: nr, c: nc });
+    const dr = R - NR + Math.floor(Math.random() * (2 * NR + 1));
+    const dc = R - NR + Math.floor(Math.random() * (2 * NR + 1));
+    if (!isValidCell(dr, dc)) continue;
 
-      // OCC_Aと重複しないか
-      const noA = cands.every(cell =>
-        !CONFIG.OCC_A.some(a => a.r === cell.r && a.c === cell.c));
+    const dist = hexDist(sr, sc, dr, dc);
+    if (dist < 2 || dist > MAX) continue;
 
-      // 他のBポイントと重複しないか（確定済み分 + 元の位置）
-      const noB = state.occB.every((other, oi) => {
-        if (oi === bi) return true;
-        const ref = newB[oi] ?? other;
-        return bCells(ref).every(oc =>
-          cands.every(cd => cd.r !== oc.r || cd.c !== oc.c));
-      });
-
-      if (noA && noB) { newB[bi] = { r: nr, c: nc, layer: state.occB[bi].layer }; placed = true; }
+    // OCC_A との重複を避ける
+    if (state.occAZone.phase !== 'dormant' && state.occAZone.r !== null) {
+      const aCells = occACells(state.occAZone.r, state.occAZone.c);
+      if (aCells.some(a => (a.r === sr && a.c === sc) || (a.r === dr && a.c === dc))) continue;
     }
-    // 失敗しても現在位置のまま保持
-    if (!placed) newB[bi] = { ...state.occB[bi] };
+
+    ep.surfaceR     = sr; ep.surfaceC = sc;
+    ep.depthR       = dr; ep.depthC   = dc;
+    ep.cycleTimer   = CONFIG.ECHO_CYCLE_TURNS;
+    ep.cycleExpired = false;
+    ep.holdTimer    = 0;
+    ep.holdOwner    = null;
+    ep.active       = true;
+    found = true;
   }
 
-  state.occB = newB;
-  state.bMoveIn = CONFIG.B_MOVE_INTERVAL;
+  if (!found) {
+    ep.surfaceR = R; ep.surfaceC = R;
+    ep.depthR   = R - 1; ep.depthC = R + 2;
+    ep.cycleTimer   = CONFIG.ECHO_CYCLE_TURNS;
+    ep.cycleExpired = false;
+    ep.holdTimer    = 0;
+    ep.holdOwner    = null;
+    ep.active       = true;
+  }
+}
+
+/** エコーポイントの保持判定・スコア・サイクル管理（毎ターン呼ぶ） */
+function updateEchoPoint(state) {
+  const ep = state.echoPoint;
+  if (!ep.active) return;
+
+  const surfCtrl = getSquareController(state, 'surface', ep.surfaceR, ep.surfaceC);
+  const deptCtrl = getSquareController(state, 'depth',   ep.depthR,   ep.depthC);
+  state.occMeta.echoSurface = surfCtrl;
+  state.occMeta.echoDepth   = deptCtrl;
+
+  const bothHolder = (surfCtrl && surfCtrl === deptCtrl) ? surfCtrl : null;
+
+  if (bothHolder !== null && bothHolder === ep.holdOwner) {
+    ep.holdTimer++;
+  } else {
+    ep.holdOwner  = bothHolder;
+    ep.holdTimer  = bothHolder ? 1 : 0;
+  }
+
+  if (ep.holdTimer >= CONFIG.ECHO_HOLD_TURNS) {
+    state.occScore[ep.holdOwner]++;
+    generateEchoPoints(state);
+    return;
+  }
+
+  ep.cycleTimer--;
+  if (ep.cycleTimer <= 0) ep.cycleExpired = true;
+
+  // サイクル期限切れかつ誰も両方を保持していない → 新エリア
+  if (ep.cycleExpired && bothHolder === null) {
+    generateEchoPoints(state);
+  }
 }
 
 /** ENGINEER repair: adjacent friendly pieces with missing HP */
@@ -475,10 +666,8 @@ function getAreaController(state, cells) {
 }
 
 function updateOccupation(state) {
-  // ── Area B (unchanged) ────────────────────────────────────────
-  const ctrlB = state.occB.map(bp => getAreaController(state, bCells(bp)));
-  state.occMeta.B0 = ctrlB[0];
-  state.occMeta.B1 = ctrlB[1];
+  // ── Echo Points ───────────────────────────────────────────────
+  updateEchoPoint(state);
 
   // ── Area A Zone lifecycle ─────────────────────────────────────
   const zone = state.occAZone;
@@ -533,16 +722,59 @@ function checkVictory(state) {
 function resolveActions(state, allActions) {
   const log = [];
 
-  // ── Step 1: Terrain changes ─────────────────────────────
+  // ── Step 0: Clear per-turn status ───────────────────────
+  for (const layer of ['surface','depth']) {
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
+        const p = state[layer][r][c].piece;
+        if (p) { p.vineSlowed = false; p.surrounded = false; }
+      }
+    }
+  }
+
+  // ── Step 0.1: Charging → launch tires ─────────────────
+  updateChargingSkills(state, log);
+
+  // ── Step 0.2: Move all active tires ────────────────────
+  if (state.tires.length > 0) processTires(state, log);
+
+  // ── Step 1: Terrain + Vine placement ───────────────────
+  // Vine placement (SKILL_VINE) processed first
+  for (const a of allActions.filter(a => a.type === 'SKILL_VINE')) {
+    const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!tCell) continue;
+    if (tCell.piece) continue;  // can't place vine on occupied cell
+    const t = tCell.terrain;
+    if (t.type !== 'flat' && t.type !== 'vine') continue;
+
+    // Remove existing vine on this cell if any
+    if (t.type === 'vine') removeVineAt(state, a.toLayer, a.toR, a.toC);
+
+    // Enforce max vines per player (auto-remove oldest)
+    const ownerVines = a.owner === 'p1' ? state.p1Vines : state.p2Vines;
+    if (ownerVines.length >= CONFIG.VINE_MAX) {
+      const oldest = ownerVines.shift();
+      const oldCell = state[oldest.layer]?.[oldest.r]?.[oldest.c];
+      if (oldCell && oldCell.terrain.type === 'vine') {
+        oldCell.terrain = { type: 'flat', stage: 0 };
+      }
+    }
+    ownerVines.push({ r: a.toR, c: a.toC, layer: a.toLayer });
+    tCell.terrain = { type: 'vine', stage: 1, placedBy: a.owner };
+    const who = a.owner === 'p1' ? 'あなた' : 'CPU';
+    // P1 sees own vine location; P2 vine hides coordinates
+    if (a.owner === 'p1') log.push(`🌿蔦設置: ${who} (${a.toR},${a.toC})`);
+    else                   log.push(`🌿蔦設置: ${who}`);
+  }
+
   const terrainMap = {};
   for (const a of allActions.filter(a => a.type === 'TERRAIN')) {
     const key = `${a.toLayer}_${a.toR}_${a.toC}`;
     if (terrainMap[key]) {
       if (terrainMap[key].terrainDir !== a.terrainDir) {
         terrainMap[key] = 'CANCEL';
-        log.push(`地形競合キャンセル: (${a.toR},${a.toC})`);
+        log.push('地形変形: 競合キャンセル');
       }
-      // same direction: ignore second (apply only once)
     } else {
       terrainMap[key] = a;
     }
@@ -550,7 +782,42 @@ function resolveActions(state, allActions) {
   for (const [, a] of Object.entries(terrainMap)) {
     if (a === 'CANCEL') continue;
     const msg = applyTerrainChange(state, a.toLayer, a.toR, a.toC, a.terrainDir, a.owner);
-    if (msg) log.push(`地形変形: ${msg}`);
+    if (msg) {
+      const who = a.owner === 'p1' ? 'あなた' : 'CPU';
+      // P1's terrain shows coordinates; P2's hides them
+      if (a.owner === 'p1') log.push(`地形変形: ${who} ${msg}`);
+      else                   log.push(`地形変形: ${who}`);
+    }
+  }
+
+  // ── Step 1.5: Reserved move execution ──────────────────
+  for (const a of allActions.filter(a => a.type === 'RESERVED_MOVE')) {
+    const srcLoc = findPieceById(state, a.pieceId);
+    if (!srcLoc) continue;
+    const who = srcLoc.piece.owner === 'p1' ? 'あなた' : 'CPU';
+    const lbl = CONFIG.PIECE_LABEL[srcLoc.piece.type];
+
+    // Move to intermediate (via) if set
+    if (a.viaR != null) {
+      const viaCell = state[a.viaLayer]?.[a.viaR]?.[a.viaC];
+      if (viaCell && !viaCell.piece) {
+        movePieceOnGrid(state, srcLoc.layer, srcLoc.r, srcLoc.c, a.viaLayer, a.viaR, a.viaC);
+        applyLandingEffect(state[a.viaLayer][a.viaR][a.viaC].piece, state[a.viaLayer][a.viaR][a.viaC].terrain);
+      }
+    }
+
+    // Move to final destination
+    const newLoc = findPieceById(state, a.pieceId);
+    if (!newLoc) continue;
+    const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (dstCell && !dstCell.piece) {
+      movePieceOnGrid(state, newLoc.layer, newLoc.r, newLoc.c, a.toLayer, a.toR, a.toC);
+      applyLandingEffect(state[a.toLayer][a.toR][a.toC].piece, state[a.toLayer][a.toR][a.toC].terrain);
+    }
+
+    const finalLoc = findPieceById(state, a.pieceId);
+    if (finalLoc) finalLoc.piece.reservedMove = null;
+    log.push(`予約移動: ${who} ${lbl} → (${a.toR},${a.toC})`);
   }
 
   // ── Step 2: Movements ───────────────────────────────────
@@ -585,13 +852,6 @@ function resolveActions(state, allActions) {
   for (const a of allActions.filter(a => a.type === 'TRANSIT')) {
     const srcCell = state[a.fromLayer]?.[a.fromR]?.[a.fromC];
     if (!srcCell?.piece || srcCell.piece.id !== a.pieceId) continue;
-    // α DCP: FREE_EMERGE allows any destination coordinate (not just same cell)
-    if (a.fromLayer === 'depth' && a.toLayer === 'surface') {
-      if (a.toR !== a.fromR || a.toC !== a.fromC) {
-        // Validate: must have FREE_EMERGE bonus
-        if (!hasDCP(state, srcCell.piece.owner, 'FREE_EMERGE')) continue;
-      }
-    }
     const destCell = state[a.toLayer]?.[a.toR]?.[a.toC];
     if (!destCell || destCell.piece) continue;
     movePieceOnGrid(state, a.fromLayer, a.fromR, a.fromC, a.toLayer, a.toR, a.toC);
@@ -624,6 +884,9 @@ function resolveActions(state, allActions) {
     }
   }
 
+  // ── Step 4.5: Apply vine slowing after all moves ────────
+  applyVineEffects(state);
+
   // ── Step 5: Attacks ─────────────────────────────────────
   const damaged = {};  // pieceId → dmg (aggregate)
   for (const a of allActions.filter(a => a.type === 'ATTACK')) {
@@ -649,6 +912,27 @@ function resolveActions(state, allActions) {
     damaged[targetCell.piece.id] = (damaged[targetCell.piece.id] ?? 0) + 1;
   }
 
+  // REACT: fire if enemy is on the watched cell after all moves
+  for (const a of allActions.filter(a => a.type === 'REACT')) {
+    const attLoc = findPieceById(state, a.pieceId);
+    if (!attLoc) continue;
+    const watchCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!watchCell?.piece) continue;
+    if (watchCell.piece.owner === a.owner) continue;
+    if (watchCell.piece.reviving) continue;
+    const dist = hexDist(attLoc.r, attLoc.c, a.toR, a.toC);
+    const def = CONFIG.PIECES[attLoc.piece.type];
+    const atkBonus = isAdjacentToWall(state, attLoc.layer, attLoc.r, attLoc.c) ? 1 : 0;
+    const reactWho = a.owner === 'p1' ? 'あなた' : 'CPU';
+    if (dist <= def.atkRange + atkBonus) {
+      damaged[watchCell.piece.id] = (damaged[watchCell.piece.id] ?? 0) + 1;
+      if (a.owner === 'p1') log.push(`⚡反応発動: ${reactWho} ${CONFIG.PIECE_LABEL[attLoc.piece.type]} → (${a.toR},${a.toC})`);
+      else                   log.push(`⚡反応発動: ${reactWho}`);
+    } else {
+      log.push(`⚡反応不発: ${reactWho}`);
+    }
+  }
+
   // SKILL_SNIPE (range-5 attack)
   for (const a of allActions.filter(a => a.type === 'SKILL_SNIPE')) {
     const sniper = findPieceById(state, a.pieceId);
@@ -659,7 +943,8 @@ function resolveActions(state, allActions) {
     if ((dr > 0 && dc > 0) || dr + dc > 5) continue;  // ortho, max 5
     damaged[tCell.piece.id] = (damaged[tCell.piece.id] ?? 0) + 1;
     const who = sniper.piece.owner === 'p1' ? 'あなた' : 'CPU';
-    log.push(`狙撃: ${who} レンジャー → (${a.toR},${a.toC})`);
+    if (sniper.piece.owner === 'p1') log.push(`狙撃: ${who} レンジャー → (${a.toR},${a.toC})`);
+    else                             log.push(`狙撃: ${who} レンジャーが使用`);
   }
 
   // Collect damaged pieces for flash
@@ -697,15 +982,16 @@ function resolveActions(state, allActions) {
     const dr = Math.sign(a.toR - wLoc.r), dc = Math.sign(a.toC - wLoc.c);
     const pr = a.toR + dr, pc = a.toC + dc;
     const who = wLoc.piece.owner === 'p1' ? 'あなた' : 'CPU';
-    if (!inBounds(pr, pc)) { log.push(`押し出し: ${who} ウォーデン → 盤外`); continue; }
+    if (!inBounds(pr, pc)) { log.push(`押し出し: ${who} ウォーデン (盤外)`); continue; }
     const dCell = state[a.toLayer][pr][pc];
     if (dCell.piece || !isLandable(dCell.terrain, CONFIG.PIECES[tCell.piece.type].height)) {
-      log.push(`押し出し: ${who} ウォーデン → 阻止`); continue;
+      log.push(`押し出し: ${who} ウォーデン (阻止)`); continue;
     }
     const pushedPiece = tCell.piece;
     movePieceOnGrid(state, a.toLayer, a.toR, a.toC, a.toLayer, pr, pc);
     applyLandingEffect(pushedPiece, state[a.toLayer][pr][pc].terrain);
-    log.push(`押し出し: ${who} ウォーデン → (${pr},${pc})`);
+    if (wLoc.piece.owner === 'p1') log.push(`押し出し: ${who} ウォーデン → (${pr},${pc})`);
+    else                           log.push(`押し出し: ${who} ウォーデンを使用`);
   }
 
   // ENGINEER repair
@@ -734,20 +1020,34 @@ function resolveActions(state, allActions) {
     log.push(`位置交換: ${who} ストライカー ⇄ ${CONFIG.PIECE_LABEL[tp.type]}`);
   }
 
+  // ROLLER charging start
+  for (const a of allActions.filter(a =>
+      a.type === 'SKILL_ROLLER_LIGHT' || a.type === 'SKILL_ROLLER_HEAVY')) {
+    const loc = findPieceById(state, a.pieceId);
+    if (!loc || loc.piece.chargingSkill) continue;  // already charging
+    const dr = a.toR - a.fromR, dc = a.toC - a.fromC;
+    const cooldown = a.type === 'SKILL_ROLLER_LIGHT'
+      ? CONFIG.LIGHT_COOLDOWN : CONFIG.HEAVY_COOLDOWN;
+    loc.piece.chargingSkill = {
+      subtype: a.type === 'SKILL_ROLLER_LIGHT' ? 'light' : 'heavy',
+      dir: [dr, dc], turnsLeft: cooldown,
+    };
+    const who = a.owner === 'p1' ? 'あなた' : 'CPU';
+    const tn = a.type === 'SKILL_ROLLER_LIGHT' ? '軽' : '重';
+    if (a.owner === 'p1') log.push(`🛞${tn}ローラーチャージ: ${who} (${cooldown}T後)`);
+    else                   log.push(`🛞${tn}ローラーチャージ: ${who}`);
+  }
+
   // ── Step 6: Escape from trap (if player used pass/escape action) ──
   for (const a of allActions.filter(a => a.type === 'ESCAPE')) {
     tryEscape(state, a.fromLayer, a.fromR, a.fromC);
     log.push(`脱出: (${a.fromR},${a.fromC})`);
   }
 
-  // ── Step 7: B-point countdown + DCP + Occupation ───────
-  state.bMoveIn--;
-  if (state.bMoveIn <= 0) {
-    moveBPoints(state);
-    state.bFlashUntil = Date.now() + 1400;
-    log.push('★ Bポイントが移動しました');
-  }
-  updateDCP(state);
+  // ── Step 6.5: Update surrounded status ──────────────────
+  updateSurrounded(state);
+
+  // ── Step 7: Occupation ──────────────────────────────────
   updateOccupation(state);
 
   const winner = checkVictory(state);
@@ -760,17 +1060,268 @@ function resolveActions(state, allActions) {
   return log;
 }
 
-// ── DCP control update ────────────────────────────────────────────
+// ── Roller direction targets ──────────────────────────────────────
 
-function updateDCP(state) {
-  for (const dcp of CONFIG.DCP) {
-    const p = state.depth[dcp.r]?.[dcp.c]?.piece;
-    state.dcpControl[dcp.key] = (p && !p.reviving) ? p.owner : null;
+/** Returns the 6 adjacent cells as valid direction targets for roller skill */
+function getValidRollerDirections(state, layer, r, c) {
+  return HEX6
+    .map(([dr, dc]) => ({ r: r + dr, c: c + dc, layer }))
+    .filter(v => isValidCell(v.r, v.c));
+}
+
+// ── Tire processing ───────────────────────────────────────────────
+
+/** Update charging cooldowns and launch tires that are ready */
+function updateChargingSkills(state, log) {
+  for (const layer of ['surface','depth']) {
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
+        const p = state[layer][r][c].piece;
+        if (!p?.chargingSkill) continue;
+        p.chargingSkill.turnsLeft--;
+        if (p.chargingSkill.turnsLeft <= 0) {
+          const { subtype, dir } = p.chargingSkill;
+          state.tireCount++;
+          state.tires.push({
+            id: `t${state.tireCount}`,
+            r, c, layer,
+            dr: dir[0], dc: dir[1],
+            subtype, owner: p.owner,
+          });
+          const who = p.owner === 'p1' ? 'あなた' : 'CPU';
+          const typeName = subtype === 'light' ? '軽' : '重';
+          log.push(`🛞${typeName}ローラー発射: ${who}`);
+          p.chargingSkill = null;
+        }
+      }
+    }
   }
 }
 
-// ── Check if DCP bonus active ─────────────────────────────────────
+/** Move all active tires and apply collision effects */
+function processTires(state, log) {
+  const toRemove = [];
+  for (const tire of state.tires) {
+    let { r, c, layer, dr, dc, subtype, owner } = tire;
 
-function hasDCP(state, owner, effect) {
-  return CONFIG.DCP.some(d => d.effect === effect && state.dcpControl[d.key] === owner);
+    for (let step = 0; step < CONFIG.TIRE_SPEED; step++) {
+      const nr = r + dr, nc = c + dc;
+
+      // Off board → remove
+      if (!isValidCell(nr, nc)) {
+        toRemove.push(tire.id);
+        log.push(`🛞タイヤが盤外へ`);
+        break;
+      }
+
+      const cell = state[layer][nr][nc];
+
+      // Vine on this cell → destroy vine, continue
+      if (cell.terrain.type === 'vine') {
+        removeVineAt(state, layer, nr, nc);
+        log.push(`🛞タイヤが蔦を破壊`);
+      }
+
+      // Wall → damage wall stage, tire stops
+      if (cell.terrain.type === 'wall' && cell.terrain.stage >= 1) {
+        cell.terrain.stage--;
+        if (cell.terrain.stage === 0) cell.terrain.type = 'flat';
+        toRemove.push(tire.id);
+        log.push(`🛞タイヤが壁に衝突（壁-1段）`);
+        break;
+      }
+
+      // Piece collision
+      if (cell.piece && !cell.piece.reviving) {
+        const target = cell.piece;
+        target.hp--;
+        const who = target.owner === 'p1' ? 'あなた' : 'CPU';
+        log.push(`🛞タイヤ直撃: ${who} ${CONFIG.PIECE_LABEL[target.type]} -1HP`);
+        if (target.hp <= 0) {
+          if (target.reviving) { state[layer][nr][nc].piece = null; }
+          else { transferToRevival(state, layer, nr, nc); }
+          log.push(`転送: ${who} ${CONFIG.PIECE_LABEL[target.type]}`);
+        }
+        if (subtype === 'light') {
+          // Light stops here
+          tire.r = nr; tire.c = nc;
+          toRemove.push(tire.id);
+          break;
+        }
+        // Heavy continues through — advance position but don't stop
+        r = nr; c = nc;
+        tire.r = nr; tire.c = nc;
+      } else {
+        // Empty cell — move tire forward
+        r = nr; c = nc;
+        tire.r = nr; tire.c = nc;
+      }
+    }
+  }
+
+  state.tires = state.tires.filter(t => !toRemove.includes(t.id));
 }
+
+// ── Hex line interpolation ────────────────────────────────────────
+
+function hexRoundCoord(q, r) {
+  const s = -q - r;
+  let qi = Math.round(q), ri = Math.round(r), si = Math.round(s);
+  const dq = Math.abs(qi - q), dr = Math.abs(ri - r), ds = Math.abs(si - s);
+  if (dq > dr && dq > ds) qi = -ri - si;
+  else if (dr > ds)        ri = -qi - si;
+  return { row: ri + R, col: qi + R };
+}
+
+/** Returns all hex cells along the line from (r1,c1) to (r2,c2), inclusive */
+function hexLineDraw(r1, c1, r2, c2, layer) {
+  const q1 = c1 - R, rr1 = r1 - R;
+  const q2 = c2 - R, rr2 = r2 - R;
+  const N = hexDist(r1, c1, r2, c2);
+  if (N === 0) return [];
+  const cells = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const { row, col } = hexRoundCoord(q1 + (q2 - q1) * t, rr1 + (rr2 - rr1) * t);
+    if (isValidCell(row, col)) cells.push({ r: row, c: col, layer });
+  }
+  return cells;
+}
+
+/** Compute all vine LINE cells (between anchors, excluding anchors) for a player */
+function computeVineLines(state, owner) {
+  const vines = owner === 'p1' ? state.p1Vines : state.p2Vines;
+  const lines = [];
+  for (let i = 0; i < vines.length; i++) {
+    for (let j = i + 1; j < vines.length; j++) {
+      if (vines[i].layer !== vines[j].layer) continue;
+      const lyr = vines[i].layer;
+      const cells = hexLineDraw(vines[i].r, vines[i].c, vines[j].r, vines[j].c, lyr);
+      const middle = cells.filter(cl =>
+        !(cl.r === vines[i].r && cl.c === vines[i].c) &&
+        !(cl.r === vines[j].r && cl.c === vines[j].c)
+      );
+      if (middle.length > 0) lines.push({ cells: middle, layer: lyr });
+    }
+  }
+  return lines;
+}
+
+// ── Reservation movement helpers ──────────────────────────────────
+
+/** Valid 2-step reserve destinations (BFS depth 2) */
+function getValidReserveMoves(state, layer, r, c) {
+  const piece = state[layer]?.[r]?.[c]?.piece;
+  if (!piece || piece.reviving || piece.trapped || piece.surrounded) return [];
+
+  const step1 = getValidMoves(state, layer, r, c);
+  const step1Keys = new Set(step1.map(v => `${v.r},${v.c}`));
+  step1Keys.add(`${r},${c}`);
+
+  const result = [];
+  const seen = new Set(step1Keys);
+
+  for (const via of step1) {
+    // Temporarily move piece to via
+    state[layer][r][c].piece = null;
+    state[layer][via.r][via.c].piece = piece;
+
+    const step2 = getValidMoves(state, layer, via.r, via.c);
+
+    // Restore
+    state[layer][via.r][via.c].piece = null;
+    state[layer][r][c].piece = piece;
+
+    for (const dest of step2) {
+      const k = `${dest.r},${dest.c}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        result.push({ r: dest.r, c: dest.c, layer, viaR: via.r, viaC: via.c, viaLayer: layer });
+      }
+    }
+  }
+  return result;
+}
+
+/** Valid intermediate cells for a specific reserve destination */
+function getValidReserveVia(state, layer, r, c, toR, toC) {
+  const piece = state[layer]?.[r]?.[c]?.piece;
+  if (!piece) return [];
+
+  const step1 = getValidMoves(state, layer, r, c);
+  const result = [];
+
+  for (const via of step1) {
+    state[layer][r][c].piece = null;
+    state[layer][via.r][via.c].piece = piece;
+
+    const step2 = getValidMoves(state, layer, via.r, via.c);
+
+    state[layer][via.r][via.c].piece = null;
+    state[layer][r][c].piece = piece;
+
+    if (step2.some(d => d.r === toR && d.c === toC)) {
+      result.push({ r: via.r, c: via.c, layer });
+    }
+  }
+  return result;
+}
+
+// ── Vine & ZOC post-resolution helpers ───────────────────────────
+
+/** After moves resolve: mark pieces on enemy vines/vine-lines as vineSlowed next turn */
+function applyVineEffects(state) {
+  // Vine anchor cells
+  for (const layer of ['surface','depth']) {
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
+        const cell = state[layer][r][c];
+        const p = cell.piece;
+        if (!p || p.reviving) continue;
+        const t = cell.terrain;
+        if (t.type === 'vine' && t.placedBy !== p.owner) {
+          p.vineSlowed = true;
+        }
+      }
+    }
+  }
+
+  // Vine line cells (rope between anchors)
+  for (const owner of ['p1', 'p2']) {
+    const enemyOwner = owner === 'p1' ? 'p2' : 'p1';
+    const lines = computeVineLines(state, owner);
+    for (const { cells, layer } of lines) {
+      for (const { r, c } of cells) {
+        const p = state[layer]?.[r]?.[c]?.piece;
+        if (p && p.owner === enemyOwner && !p.reviving) {
+          p.vineSlowed = true;
+        }
+      }
+    }
+  }
+}
+
+/** After resolution: mark pieces surrounded by 3+ ZOC sources */
+function updateSurrounded(state) {
+  for (const layer of ['surface','depth']) {
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
+        const p = state[layer][r][c].piece;
+        if (!p || p.reviving) continue;
+        p.surrounded = countZOCSources(state, layer, r, c, p.owner) >= 3;
+      }
+    }
+  }
+}
+
+/** Check if (r,c) is adjacent to any wall stage 1+ */
+function isAdjacentToWall(state, layer, r, c) {
+  for (const [dr, dc] of HEX6) {
+    const nr = r + dr, nc = c + dc;
+    if (!isValidCell(nr, nc)) continue;
+    const t = state[layer][nr][nc].terrain;
+    if (t.type === 'wall' && t.stage >= 1) return true;
+  }
+  return false;
+}
+

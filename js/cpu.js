@@ -13,9 +13,12 @@ const CpuAI = (() => {
       for (const cl of occACells(zone.r, zone.c))
         dists.push(hexDist(r, c, cl.r, cl.c));
     }
-    // Area B points
-    for (const b of state.occB.flatMap(bp => bCells(bp)))
-      dists.push(hexDist(r, c, b.r, b.c));
+    // Echo Points
+    const ep = state.echoPoint;
+    if (ep?.active) {
+      dists.push(hexDist(r, c, ep.surfaceR, ep.surfaceC));
+      dists.push(hexDist(r, c, ep.depthR,   ep.depthC));
+    }
     return dists.length > 0 ? Math.min(...dists) : 999;
   }
 
@@ -24,32 +27,34 @@ const CpuAI = (() => {
     const piece = state[fromLayer][fr][fc].piece;
     if (!piece) return -999;
 
-    // Closer to occupation squares is better for CPU (p2)
     const before = distToOcc(state, fr, fc);
     const after  = distToOcc(state, tr, tc);
     score += (before - after) * 3;
 
-    // Bonus for standing on Area A zone cells (active or preview)
     const zone = state.occAZone;
     if (zone && zone.r !== null && zone.phase !== 'dormant') {
       const priority = zone.phase === 'active' ? 25 : 10;
       if (occACells(zone.r, zone.c).some(cl => tr === cl.r && tc === cl.c)) score += priority;
     }
-    // Bonus for standing on B point cells (layer-aware)
-    if (state.occB.some(bp => bCells(bp).some(b =>
-      tr === b.r && tc === b.c && b.layer === fromLayer))) score += 12;
+    const ep = state.echoPoint;
+    if (ep?.active) {
+      if (fromLayer === 'surface' && tr === ep.surfaceR && tc === ep.surfaceC) score += 12;
+      if (fromLayer === 'depth'   && tr === ep.depthR   && tc === ep.depthC)   score += 12;
+    }
 
-    // Avoid cells adjacent to many enemy pieces (threat)
-    for (const [dr, dc] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+    for (const [dr, dc] of HEX6) {
       const nr = tr + dr, nc = tc + dc;
-      if (nr < 0 || nr >= CONFIG.BOARD_SIZE || nc < 0 || nc >= CONFIG.BOARD_SIZE) continue;
+      if (!isValidCell(nr, nc)) continue;
       const p = state[fromLayer][nr][nc].piece;
       if (p && p.owner === 'p1') score -= 4;
     }
 
-    // Penalty for moving into a hole
-    const cell = state[fromLayer][tr][tc];
-    if (cell.terrain.type === 'hole') score -= 10;
+    const destCell = state[fromLayer][tr][tc];
+    if (destCell.terrain.type === 'hole') score -= 10;
+    // Avoid moving into enemy vine
+    if (destCell.terrain.type === 'vine' && destCell.terrain.placedBy === 'p1') score -= 8;
+    // Avoid ZOC cells if piece is valuable (HP > 1)
+    if (piece.hp > 1 && isInEnemyZOC(state, fromLayer, tr, tc, 'p2')) score -= 5;
 
     return score;
   }
@@ -65,7 +70,8 @@ const CpuAI = (() => {
     const zone2 = state.occAZone;
     if (zone2?.r !== null && zone2?.phase === 'active' &&
         occACells(zone2.r, zone2.c).some(cl => tr === cl.r && tc === cl.c)) score += 30;
-    if (state.occB.some(bp => bCells(bp).some(b => tr === b.r && tc === b.c))) score += 20;
+    const ep2 = state.echoPoint;
+    if (ep2?.active && ((tr === ep2.surfaceR && tc === ep2.surfaceC) || (tr === ep2.depthR && tc === ep2.depthC))) score += 20;
 
     // Prefer killing low-HP targets (finish them off)
     score += (def.maxHp - target.hp) * 8;
@@ -79,17 +85,12 @@ const CpuAI = (() => {
       // Emerging to surface: good if close to occupation target
       score += Math.max(0, 4 - distToOcc(state, r, c));
     } else {
-      // Submerging to depth: DCP proximity bonus
-      const dcpDist = Math.min(...CONFIG.DCP.map(d => Math.abs(r-d.r)+Math.abs(c-d.c)));
-      if (dcpDist <= 2) score += 5;
-      // B2 (depth B point) proximity bonus
-      const depthBcells = state.occB
-        .filter(bp => (bp.layer ?? 'surface') === 'depth')
-        .flatMap(bp => bCells(bp));
-      if (depthBcells.length > 0) {
-        const b2Dist = Math.min(...depthBcells.map(b => Math.abs(r-b.r) + Math.abs(c-b.c)));
-        if (b2Dist <= 3) score += 6;
-        if (b2Dist === 0) score += 12;
+      // Submerging to depth: Echo depth point proximity bonus
+      const ep = state.echoPoint;
+      if (ep?.active && ep.depthR !== null) {
+        const eDist = hexDist(r, c, ep.depthR, ep.depthC);
+        if (eDist <= 3) score += 6;
+        if (eDist === 0) score += 12;
       }
     }
     return score;
@@ -98,21 +99,52 @@ const CpuAI = (() => {
   function scoreTerrain(state, layer, tr, tc, dir) {
     let score = 2;
 
-    // Placing a wall between own pieces and enemy pieces is good
-    for (const [dr, dc] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+    for (const [dr, dc] of HEX6) {
       const nr = tr + dr, nc = tc + dc;
-      if (nr < 0 || nr >= CONFIG.BOARD_SIZE || nc < 0 || nc >= CONFIG.BOARD_SIZE) continue;
+      if (!isValidCell(nr, nc)) continue;
       const p = state[layer][nr][nc].piece;
       if (p) {
-        if (p.owner === 'p1' && dir === 'up') score += 6;   // wall blocking enemy
-        if (p.owner === 'p2' && dir === 'down') score -= 4; // hole under own piece
+        if (p.owner === 'p1' && dir === 'up') score += 6;
+        if (p.owner === 'p2' && dir === 'down') score -= 4;
       }
     }
 
-    // Placing hole under enemy piece
     const target = state[layer][tr][tc].piece;
     if (target && target.owner === 'p1' && dir === 'down') score += 15;
 
+    return score;
+  }
+
+  function scoreRollerDir(state, layer, r, c, dr, dc, subtype) {
+    let score = 1;
+    let nr = r, nc = c;
+    for (let step = 0; step < 12; step++) {
+      nr += dr; nc += dc;
+      if (!isValidCell(nr, nc)) break;
+      const cell = state[layer][nr][nc];
+      if (cell.terrain.type === 'wall' && cell.terrain.stage >= 1) break;
+      if (cell.piece) {
+        if (cell.piece.owner === 'p1') score += 10;  // hits enemy
+        if (cell.piece.owner === 'p2') score -= 6;   // hits ally
+        if (subtype === 'light') break;  // light stops on first piece
+      }
+    }
+    return score;
+  }
+
+  function scoreVine(state, layer, tr, tc) {
+    let score = 3;
+    // High value: vine on a cell enemy is likely to pass through (near occ zone)
+    const distA = distToOcc(state, tr, tc);
+    if (distA <= 2) score += 8;
+    if (distA <= 1) score += 5;
+    // Penalize placing vine on own piece paths
+    for (const [dr, dc] of HEX6) {
+      const nr = tr + dr, nc = tc + dc;
+      if (!isValidCell(nr, nc)) continue;
+      const p = state[layer][nr][nc].piece;
+      if (p && p.owner === 'p2') score -= 3;
+    }
     return score;
   }
 
@@ -198,6 +230,29 @@ const CpuAI = (() => {
             toLayer:layer, toR:t.r, toC:t.c,
             score: 6,
           });
+        }
+        for (const t of getValidVineTargets(state, layer, r, c)) {
+          candidates.push({
+            type:'SKILL_VINE', pieceId:piece.id, owner:'p2',
+            fromLayer:layer, fromR:r, fromC:c,
+            toLayer:layer, toR:t.r, toC:t.c,
+            score: scoreVine(state, layer, t.r, t.c),
+          });
+        }
+      } else if (piece.type === 'ROLLER' && !piece.chargingSkill) {
+        for (const [dr, dc] of HEX6) {
+          const nr = r + dr, nc = c + dc;
+          if (!isValidCell(nr, nc)) continue;
+          for (const subtype of ['light', 'heavy']) {
+            const s = scoreRollerDir(state, layer, r, c, dr, dc, subtype);
+            if (s > 0) candidates.push({
+              type: subtype === 'light' ? 'SKILL_ROLLER_LIGHT' : 'SKILL_ROLLER_HEAVY',
+              pieceId: piece.id, owner: 'p2',
+              fromLayer: layer, fromR: r, fromC: c,
+              toLayer: layer, toR: nr, toC: nc,
+              score: s + (subtype === 'heavy' ? -2 : 0),
+            });
+          }
         }
       }
 
