@@ -109,12 +109,6 @@ function canUseRoller(pieceType) { return pieceType === 'ROLLER'; }
 
 function isMobile() { return window.innerWidth <= 700; }
 
-function updatePaintButton() {
-  const btn = document.getElementById('btn-paint');
-  const icons = { red:'🔴', yellow:'🟡', blue:'🔵' };
-  btn.textContent = `${icons[currentPaintColor]}メモ`;
-  btn.dataset.color = currentPaintColor;
-}
 
 // ── Tab / panel switching ──────────────────────────────────────────
 function switchInfoTab(tabName) {
@@ -162,8 +156,6 @@ function restartGame() {
   generateEchoPoints(G);
   paintMarkers.clear();
   Renderer.setPaintMarkers(paintMarkers);
-  paintMode = false;
-  document.getElementById('btn-paint')?.classList.remove('active');
   reserveDestination = null;
   clearSlots();
   hideGameOver();
@@ -250,13 +242,6 @@ function bindEvents() {
     G.validCells = [];
   });
 
-  // Paint button: クリックで色をサイクル切替
-  document.getElementById('btn-paint').addEventListener('click', () => {
-    const idx = PAINT_COLORS.indexOf(currentPaintColor);
-    currentPaintColor = PAINT_COLORS[(idx + 1) % PAINT_COLORS.length];
-    updatePaintButton();
-    setMessage(`メモ色: ${{'red':'🔴赤','yellow':'🟡黄','blue':'🔵青'}[currentPaintColor]} — 右クリック/長押しでメモ配置`);
-  });
 
   // Layer transit
   document.getElementById('btn-transit').addEventListener('click', () => {
@@ -305,9 +290,8 @@ function bindEvents() {
     btn.addEventListener('click', () => clearSlot(parseInt(btn.dataset.idx)));
   });
 
-  // Confirm / deselect
-  document.getElementById('btn-confirm') .addEventListener('click', confirmTurn);
-  document.getElementById('btn-deselect').addEventListener('click', deselect);
+  // Confirm
+  document.getElementById('btn-confirm').addEventListener('click', confirmTurn);
 
   // Mobile: info tab buttons
   document.querySelectorAll('.info-tab').forEach(btn => {

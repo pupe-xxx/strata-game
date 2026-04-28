@@ -92,8 +92,17 @@
             </div>
           </div>
 
-          <!-- Row 2: actions -->
-          <div class="ctrl-row ctrl-row-2">
+          <!-- Row 2: slots + confirm -->
+          <div class="ctrl-row ctrl-row-confirm">
+            <div id="slots">
+              <div class="slot" id="slot-0" draggable="true"><span class="slot-num">①</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="0" style="display:none">✕</button></div>
+              <div class="slot" id="slot-1" draggable="true"><span class="slot-num">②</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="1" style="display:none">✕</button></div>
+            </div>
+            <button id="btn-confirm" disabled>ターン確定</button>
+          </div>
+
+          <!-- Row 3: action buttons -->
+          <div class="ctrl-row ctrl-row-actions">
             <div id="action-inline">
               <div id="action-btns">
                 <button class="act-btn" id="btn-terrain"     disabled>地形</button>
@@ -111,18 +120,6 @@
                 <button class="roller-opt" data-rtype="LIGHT">🛞軽(2T)</button>
                 <button class="roller-opt" data-rtype="HEAVY">🛞重(3T)</button>
                 <button id="btn-roller-cancel">×</button>
-              </div>
-            </div>
-
-            <div id="slots-confirm">
-              <div id="slots">
-                <div class="slot" id="slot-0" draggable="true"><span class="slot-num">①</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="0" style="display:none">✕</button></div>
-                <div class="slot" id="slot-1" draggable="true"><span class="slot-num">②</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="1" style="display:none">✕</button></div>
-              </div>
-              <div id="confirm-area">
-                <button id="btn-confirm" disabled>ターン確定</button>
-                <button id="btn-deselect">解除</button>
-                <button id="btn-paint" class="paint-btn" title="右クリック/長押しでメモ配置">🔴メモ</button>
               </div>
             </div>
           </div>

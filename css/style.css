@@ -237,7 +237,15 @@ html, body {
 }
 
 .ctrl-row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
-.ctrl-row-2 { align-items: flex-start; }
+
+/* Row 2: slots + confirm */
+.ctrl-row-confirm { align-items: stretch; }
+.ctrl-row-confirm #slots { flex: 1; display: flex; gap: 4px; }
+.ctrl-row-confirm #btn-confirm { flex-shrink: 0; }
+
+/* Row 3: action buttons (full width) */
+.ctrl-row-actions { align-items: flex-start; }
+.ctrl-row-actions #action-inline { flex: 1; }
 
 #layer-toggle { display: none; }  /* PC: スクロールで切り替え、ボタン不要 */
 .ctrl-row-1 { display: none; }   /* PC: 方向ボタンも不要 */
@@ -275,7 +283,7 @@ html, body {
   flex-direction: column;
   gap: 4px;
   position: relative;
-  flex-shrink: 0;
+  width: 100%;
 }
 #action-btns { display: flex; gap: 4px; flex-wrap: nowrap; }
 
@@ -324,7 +332,6 @@ html, body {
 .paint-btn[data-color="yellow"] { background:#3a3010; border-color:#ffd700; color:#ffd700; }
 .paint-btn[data-color="blue"]   { background:#0d2038; border-color:#4fc3f7; color:#4fc3f7; }
 
-#slots-confirm { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
 #slots { display: flex; gap: 4px; }
 .slot {
   display: flex;
@@ -348,7 +355,6 @@ html, body {
 .slot-text { flex: 1; color: var(--text); white-space: normal; line-height: 1.3; word-break: break-all; max-height: 2.6em; overflow: hidden; }
 .slot-clear { background: none; border: none; color: var(--p2); cursor: pointer; font-size: 11px; padding: 0 2px; }
 
-#confirm-area { display: flex; gap: 4px; }
 #btn-confirm {
   padding: 5px 12px;
   background: #1565c0;
@@ -608,11 +614,11 @@ html, body {
     border-bottom: 1px solid var(--border);
   }
 
-  /* display:contents で ctrl-row の枠を消して子要素を直接 controls-row に参加させる */
-  .ctrl-row-2   { display: contents; }
-  #slots-confirm { display: contents; }
+  /* モバイル: ctrl-row-confirm/actions を展開してflexに参加させる */
+  .ctrl-row-confirm { display: contents; }
+  .ctrl-row-actions { display: none; }  /* モバイルは mob-action-section を使う */
 
-  /* 行1: スロット ① のみ（② は非表示） — flex-basis:100% で折り返し */
+  /* 行1: スロット */
   #slots {
     order: 1;
     flex-basis: 100%;
@@ -627,8 +633,8 @@ html, body {
   }
   .slot-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
-  /* 行2: 確定・解除 → 表層・深層 → 方角 */
-  #confirm-area { order: 2; display: flex; gap: 4px; flex-shrink: 0; }
+  /* 行2: ターン確定 + 層切替ボタン */
+  #btn-confirm  { order: 2; flex-shrink: 0; }
   .ctrl-row-1   { order: 3; flex-shrink: 0; display: flex; gap: 5px; align-items: center; }
   #action-inline { display: none !important; }
 

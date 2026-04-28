@@ -32,10 +32,10 @@ const Renderer = (() => {
     const isMobile = window.innerWidth <= 700;
     const sideW    = isMobile ? 0 : 185 + 195 + 24;
     const headerH  = isMobile ? 44 : 52;
-    // PC: layer-indicator(30) + message-bar(32) + controls-row(≈150) + gaps/padding(20) = 232
+    // PC: indicator(30) + msg(32) + confirm-row(36) + actions-row(36) + gaps(20) = 154
     const reserveH = isMobile
       ? Math.round(window.innerHeight * 0.36) + 44
-      : 232;
+      : 160;
     const availW = window.innerWidth  - sideW - (isMobile ? 8 : 16);
     const availH = window.innerHeight - headerH - reserveH;
     const scaleW = availW  / CONFIG.CANVAS_W;
@@ -334,7 +334,8 @@ const Renderer = (() => {
   function drawHighlights(cells, mode) {
     const C = CONFIG.CLR;
     const colMap = {
-      MOVE:'VALID_MOVE', ATTACK:'VALID_ATK', TERRAIN:'VALID_TRN',
+      MOVE:'VALID_MOVE', ATTACK:'VALID_ATK',
+      TERRAIN:'VALID_TRN', TERRAIN_DOWN:'VALID_TRN_DOWN',
       TRANSIT:'VALID_MOVE', SKILL:'VALID_ATK',
       VINE:'VALID_VINE', REACT:'VALID_REACT', RESERVE:'VALID_RESERVE',
     };
@@ -624,7 +625,9 @@ const Renderer = (() => {
       drawHighlights(_reserveCells, 'RESERVE');
     }
     if (state.selected && state.validCells.length > 0) {
-      drawHighlights(state.validCells, state.actionMode);
+      const hlMode = (state.actionMode === 'TERRAIN' && state.terrainDir === 'down')
+        ? 'TERRAIN_DOWN' : state.actionMode;
+      drawHighlights(state.validCells, hlMode);
     }
     if (state.selected && state.actionMode === 'MOVE' && state.attackCells?.length > 0) {
       drawHighlights(state.attackCells, 'ATTACK');
