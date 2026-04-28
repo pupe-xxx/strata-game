@@ -194,9 +194,33 @@ function bindEvents() {
   canvas.addEventListener('touchstart',  onCanvasTouchStart, { passive: false });
   canvas.addEventListener('touchend',    onCanvasTouchEnd,   { passive: false });
 
-  // Layer toggle
+  // Layer toggle (buttons)
   document.getElementById('btn-surface').addEventListener('click', () => setLayer('surface'));
   document.getElementById('btn-depth').addEventListener('click',   () => setLayer('depth'));
+
+  // PC: mouse scroll on canvas → layer switch (up=surface, down=depth)
+  canvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    if (e.deltaY < 0) setLayer('surface');
+    else              setLayer('depth');
+  }, { passive: false });
+
+  // Mobile: double-tap on side panels to toggle layer
+  let _dtTimer = null;
+  function addDoubleTapToggle(el) {
+    if (!el) return;
+    el.addEventListener('touchend', e => {
+      if (_dtTimer) {
+        clearTimeout(_dtTimer);
+        _dtTimer = null;
+        setLayer(G.viewLayer === 'surface' ? 'depth' : 'surface');
+      } else {
+        _dtTimer = setTimeout(() => { _dtTimer = null; }, 320);
+      }
+    });
+  }
+  addDoubleTapToggle(document.getElementById('info-panel'));
+  addDoubleTapToggle(document.getElementById('side-panel'));
 
   // View buttons (no-op for hex top-down view)
   document.querySelectorAll('.view-btn').forEach(btn => {
