@@ -71,24 +71,53 @@
 
       </aside>
 
-      <!-- ===== BOARD + CONTROLS ===== -->
+      <!-- ===== BOARD ONLY ===== -->
       <div id="board-wrapper">
         <div id="layer-indicator" class="surface pc-only">● 表層</div>
         <canvas id="game-canvas"></canvas>
         <div id="message-bar">駒を選択してください</div>
+      </div>
 
+      <!-- ===== SIDE PANEL ===== -->
+      <aside id="side-panel">
+
+        <!-- CPU status (PC only) -->
+        <section class="player-section pc-only" id="p2-section">
+          <div class="player-label cpu-label">CPU</div>
+          <div class="hand-area" id="p2-hand"></div>
+          <div class="piece-list" id="p2-pieces"></div>
+        </section>
+
+        <!-- Occupation counters -->
+        <section id="occ-section">
+          <div class="section-title">占領状況</div>
+
+          <!-- スコア -->
+          <div id="occ-score-display" class="occ-score">あなた 0pt  /  CPU 0pt</div>
+          <div class="victory-hint">先取 <b>5点</b> 勝利 / 30T上限</div>
+
+          <!-- Echo Points -->
+          <div style="margin-top:8px; font-size:0.75rem; color:#26c6da; font-weight:bold;">エコーポイント</div>
+          <div class="occ-row" style="margin-top:4px">
+            <span class="occ-key" style="color:#26c6da">E表</span>
+            <span class="occ-count" id="echo-surface-count" style="margin-left:auto">—</span>
+          </div>
+          <div class="occ-row">
+            <span class="occ-key" style="color:#26c6da">E深</span>
+            <span class="occ-count" id="echo-depth-count" style="margin-left:auto">—</span>
+          </div>
+          <div class="victory-hint" id="echo-hold-timer">保持: 0/3T</div>
+          <div class="victory-hint" id="echo-cycle-timer">サイクル残: 10T</div>
+          <div id="victory-warn" style="display:none"></div>
+        </section>
+
+        <!-- Action UI (PC: sidebar / Mobile: JS が game-layout に移動) -->
         <div id="controls-row">
-          <!-- Row 1: view controls -->
+          <!-- Row 1: layer toggle (mobile only) -->
           <div class="ctrl-row ctrl-row-1">
             <div id="layer-toggle">
               <button id="btn-surface" class="layer-btn active">表層</button>
               <button id="btn-depth"   class="layer-btn">深層</button>
-            </div>
-            <div id="view-dir-btns">
-              <button class="view-btn" data-dir="0">↑N</button>
-              <button class="view-btn" data-dir="1">→E</button>
-              <button class="view-btn" data-dir="2">↓S</button>
-              <button class="view-btn" data-dir="3">←W</button>
             </div>
           </div>
 
@@ -124,40 +153,6 @@
             </div>
           </div>
         </div>
-      </div>
-
-      <!-- ===== SIDE PANEL ===== -->
-      <aside id="side-panel">
-
-        <!-- CPU status (PC only) -->
-        <section class="player-section pc-only" id="p2-section">
-          <div class="player-label cpu-label">CPU</div>
-          <div class="hand-area" id="p2-hand"></div>
-          <div class="piece-list" id="p2-pieces"></div>
-        </section>
-
-        <!-- Occupation counters -->
-        <section id="occ-section">
-          <div class="section-title">占領状況</div>
-
-          <!-- スコア -->
-          <div id="occ-score-display" class="occ-score">あなた 0pt  /  CPU 0pt</div>
-          <div class="victory-hint">先取 <b>5点</b> 勝利 / 30T上限</div>
-
-          <!-- Echo Points -->
-          <div style="margin-top:8px; font-size:0.75rem; color:#26c6da; font-weight:bold;">エコーポイント</div>
-          <div class="occ-row" style="margin-top:4px">
-            <span class="occ-key" style="color:#26c6da">E表</span>
-            <span class="occ-count" id="echo-surface-count" style="margin-left:auto">—</span>
-          </div>
-          <div class="occ-row">
-            <span class="occ-key" style="color:#26c6da">E深</span>
-            <span class="occ-count" id="echo-depth-count" style="margin-left:auto">—</span>
-          </div>
-          <div class="victory-hint" id="echo-hold-timer">保持: 0/3T</div>
-          <div class="victory-hint" id="echo-cycle-timer">サイクル残: 10T</div>
-          <div id="victory-warn" style="display:none"></div>
-        </section>
 
         <!-- Player 1 status (PC only) -->
         <section class="player-section pc-only" id="p1-section">

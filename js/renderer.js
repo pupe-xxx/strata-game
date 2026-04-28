@@ -30,17 +30,17 @@ const Renderer = (() => {
   // ── Resize ───────────────────────────────────────────────────────
   function resize() {
     const isMobile = window.innerWidth <= 700;
-    const sideW    = isMobile ? 0 : 185 + 195 + 24;
+    const sideW    = isMobile ? 0 : 185 + 240 + 24;  // left:185 + right:240 + borders
     const headerH  = isMobile ? 44 : 52;
-    // PC: indicator(30) + msg(32) + confirm-row(36) + actions-row(36) + gaps(20) = 154
+    // PC: controls-row は sidebar へ移動 → board-wrapper は indicator(30) + msg(32) + gap/pad(20)
     const reserveH = isMobile
       ? Math.round(window.innerHeight * 0.36) + 44
-      : 160;
+      : 82;
     const availW = window.innerWidth  - sideW - (isMobile ? 8 : 16);
     const availH = window.innerHeight - headerH - reserveH;
     const scaleW = availW  / CONFIG.CANVAS_W;
     const scaleH = availH  / CONFIG.CANVAS_H;
-    scale        = Math.max(0.28, Math.min(scaleW, scaleH, 1.0));
+    scale        = Math.max(0.28, Math.min(scaleW, scaleH, 2.5));  // 上限を2.5に拡大
     canvas.width  = Math.round(CONFIG.CANVAS_W * scale);
     canvas.height = Math.round(CONFIG.CANVAS_H * scale);
     HEX = CONFIG.HEX_SIZE * scale;
