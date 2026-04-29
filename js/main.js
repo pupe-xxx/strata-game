@@ -595,24 +595,21 @@ function onCanvasTouchEnd(e) {
   const touch = e.changedTouches[0];
   const { px, py } = clientToCanvas(e.target, touch.clientX, touch.clientY);
 
-  // ─ ダブルタップ検出（層切り替え） ─
+  // ─ タップを即時処理（遅延なし） ─
+  if (_memoMode) {
+    cyclePaintMarker(px, py);
+  } else {
+    handleCanvasInteraction(px, py, false);
+  }
+
+  // ─ ダブルタップ検出（加算的：層切り替えも実行） ─
   if (_canvasDtTimer) {
     clearTimeout(_canvasDtTimer);
     _canvasDtTimer = null;
     setLayer(G.currentLayer === 'surface' ? 'depth' : 'surface');
-    return;
+  } else {
+    _canvasDtTimer = setTimeout(() => { _canvasDtTimer = null; }, 280);
   }
-
-  // ─ シングルタップ（250ms後に確定） ─
-  const savedPx = px, savedPy = py;
-  _canvasDtTimer = setTimeout(() => {
-    _canvasDtTimer = null;
-    if (_memoMode) {
-      cyclePaintMarker(savedPx, savedPy);
-    } else {
-      handleCanvasInteraction(savedPx, savedPy, false);
-    }
-  }, 250);
 }
 
 function onCanvasClick(e) {
@@ -1547,14 +1544,13 @@ function openSidePeek(type) {
 }
 
 function closeSidePeek() {
-  const peek  = document.getElementById('side-peek');
-  const panel = document.getElementById('side-peek-panel');
+  const peek = document.getElementById('side-peek');
   peek.classList.remove('open');
   _peekType = null;
-  // トランジション完了後に display:none
-  panel.addEventListener('transitionend', () => {
+  // トランジション(0.25s)完了後にdisplay:none（transitionend非依存で確実）
+  setTimeout(() => {
     if (!peek.classList.contains('open')) peek.style.display = 'none';
-  }, { once: true });
+  }, 300);
 }
 
 function syncPeekPiece() {
