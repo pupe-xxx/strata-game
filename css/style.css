@@ -613,15 +613,13 @@ html, body {
 
 /* ===== SIDE PEEK ===== */
 #side-peek {
+  display: none;
   position: fixed;
   inset: 0;
   z-index: 90;
-  pointer-events: none;
-  visibility: hidden;
 }
 #side-peek.open {
-  pointer-events: auto;
-  visibility: visible;
+  display: block;
 }
 #side-peek-overlay {
   position: absolute;
@@ -778,7 +776,7 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    overflow: visible;
+    overflow: hidden;
     min-height: 0;
     padding: 0;
     z-index: auto;

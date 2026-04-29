@@ -1540,12 +1540,21 @@ function openSidePeek(type) {
     title.textContent = '駒情報';
     syncPeekPiece();
   }
+  // display:none → display:block してからクラス追加でアニメーション発火
+  peek.style.display = 'block';
+  peek.offsetHeight; // reflow
   peek.classList.add('open');
 }
 
 function closeSidePeek() {
-  document.getElementById('side-peek').classList.remove('open');
+  const peek  = document.getElementById('side-peek');
+  const panel = document.getElementById('side-peek-panel');
+  peek.classList.remove('open');
   _peekType = null;
+  // トランジション完了後に display:none
+  panel.addEventListener('transitionend', () => {
+    if (!peek.classList.contains('open')) peek.style.display = 'none';
+  }, { once: true });
 }
 
 function syncPeekPiece() {
