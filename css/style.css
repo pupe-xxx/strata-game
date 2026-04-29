@@ -58,26 +58,6 @@ html, body {
   font-size: 11px;
 }
 
-#player-btns {
-  display: flex;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-}
-#btn-player1, #btn-player2 {
-  flex: 1;
-  padding: 7px 4px;
-  background: var(--btn);
-  border: none;
-  border-right: 1px solid var(--border);
-  color: var(--text-dim);
-  font-family: var(--font);
-  font-size: 13px;
-  cursor: pointer;
-  transition: background .15s, color .15s;
-  touch-action: manipulation;
-}
-#btn-player2 { border-right: none; }
-#btn-player1:hover, #btn-player2:hover { background: var(--btn-hover); color: var(--text); }
 
 #game-layout {
   display: flex;
@@ -801,8 +781,6 @@ html, body {
     flex-direction: column;
   }
   .tab-panel { padding: 4px; }
-  #player-btns { border-bottom: none; }
-  #btn-player1, #btn-player2 { padding: 10px 4px; font-size: 13px; }
 
   /* ── 盤エリア（最大確保・下寄せ） ── */
   #board-wrapper {

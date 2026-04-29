@@ -373,9 +373,8 @@ function bindEvents() {
     e.preventDefault(); closeSidePeek();
   });
 
-  // Left peek（あなた / 相手）
-  document.getElementById('btn-player1')?.addEventListener('click', () => openLeftPeek('p1'));
-  document.getElementById('btn-player2')?.addEventListener('click', () => openLeftPeek('p2'));
+  // Left peek（デッキ）
+  document.getElementById('btn-deck')?.addEventListener('click', () => openLeftPeek('both'));
   closeFn(document.getElementById('btn-close-left-peek'), closeLeftPeek);
   document.getElementById('left-peek-overlay')?.addEventListener('click', closeLeftPeek);
   document.getElementById('left-peek-overlay')?.addEventListener('touchend', e => {
@@ -1539,9 +1538,12 @@ let _leftPeekOwner = null;
 function openLeftPeek(owner) {
   _leftPeekOwner = owner;
   const peek = document.getElementById('left-peek');
-  document.getElementById('lp-p1-section').style.display = owner === 'p1' ? 'flex' : 'none';
-  document.getElementById('lp-p2-section').style.display = owner === 'p2' ? 'flex' : 'none';
-  document.getElementById('left-peek-title').textContent = owner === 'p1' ? 'あなた' : '相手';
+  const showP1 = owner === 'p1' || owner === 'both';
+  const showP2 = owner === 'p2' || owner === 'both';
+  document.getElementById('lp-p1-section').style.display = showP1 ? 'flex' : 'none';
+  document.getElementById('lp-p2-section').style.display = showP2 ? 'flex' : 'none';
+  document.getElementById('left-peek-title').textContent =
+    owner === 'p1' ? 'あなた' : owner === 'p2' ? '相手' : 'デッキ';
   peek.style.display = 'block';
   peek.offsetHeight;
   peek.classList.add('open');
