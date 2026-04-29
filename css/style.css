@@ -53,7 +53,7 @@ html, body {
 #turn-display { color: var(--gold); font-size: 11px; flex-shrink: 0; }
 
 /* ヘッダーボタン共通（上書き） */
-#btn-log-popup, #btn-piece-info {
+#btn-log-popup, #btn-piece-info, #btn-deck {
   padding: 3px 8px;
   font-size: 11px;
 }
@@ -569,7 +569,7 @@ html, body {
 #hand-popup-content .hand-chip  { font-size: 13px; padding: 3px 8px; }
 
 /* ヘッダーボタン共通 */
-#btn-piece-info, #btn-log-popup {
+#btn-piece-info, #btn-log-popup, #btn-deck {
   padding: 5px 12px; background: var(--btn); border: 1px solid var(--border);
   color: var(--text-dim); border-radius: var(--radius); cursor: pointer;
   font-family: var(--font); font-size: 13px; touch-action: manipulation;
@@ -875,10 +875,11 @@ html, body {
   /* 使用しないモバイル専用UI */
   #mob-action-section { display: none !important; }
 
-  #btn-log-popup {
+  #btn-log-popup, #btn-piece-info, #btn-deck {
     padding: 5px 12px; background: var(--btn); border: 1px solid var(--border);
     color: var(--text-dim); border-radius: var(--radius); cursor: pointer;
     font-family: var(--font); font-size: 13px; touch-action: manipulation;
+    pointer-events: auto;
   }
 
   #gameover-box   { padding: 24px 20px; }
