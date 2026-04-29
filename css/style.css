@@ -417,8 +417,15 @@ html, body {
 
 /* ===== COL 3: 駒情報 ===== */
 #side-panel {
-  width: 0;
-  display: none;
+  width: 240px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
 }
 
 .section-title {

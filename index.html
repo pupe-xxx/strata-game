@@ -22,7 +22,7 @@
 
       <!-- ===== COL 1: 詳細バー ===== -->
       <aside id="info-panel">
-        <div id="player-btns">
+        <div id="player-btns" class="mobile-only">
           <button id="btn-player1">あなた</button>
           <button id="btn-player2">相手</button>
         </div>
@@ -144,8 +144,20 @@
 
       </div>
 
-      <!-- ===== COL 3: （空・モバイル用アクション） ===== -->
+      <!-- ===== COL 3: 駒情報 ===== -->
       <aside id="side-panel">
+        <section class="player-section pc-only" id="p2-section">
+          <div class="player-label cpu-label">CPU</div>
+          <div class="hand-area" id="p2-hand"></div>
+          <div class="piece-list" id="p2-pieces"></div>
+        </section>
+
+        <section class="player-section pc-only" id="p1-section">
+          <div class="player-label you-label">あなた</div>
+          <div class="piece-list" id="p1-pieces"></div>
+          <div class="hand-area" id="p1-hand"></div>
+        </section>
+
         <!-- Mobile: action buttons (shown when piece selected) -->
         <section id="mob-action-section">
           <div id="mob-action-btns">
@@ -184,13 +196,13 @@
         </div>
         <div id="lp-p1-section" class="sp-section" style="display:none">
           <div class="player-label you-label">あなた</div>
-          <div class="piece-list" id="p1-pieces"></div>
-          <div class="hand-area" id="p1-hand"></div>
+          <div class="piece-list" id="mob-lp-p1-pieces"></div>
+          <div class="hand-area" id="mob-lp-p1-hand"></div>
         </div>
         <div id="lp-p2-section" class="sp-section" style="display:none">
           <div class="player-label cpu-label">CPU（相手）</div>
-          <div class="piece-list" id="p2-pieces"></div>
-          <div class="hand-area" id="p2-hand"></div>
+          <div class="piece-list" id="mob-lp-p2-pieces"></div>
+          <div class="hand-area" id="mob-lp-p2-hand"></div>
         </div>
       </div>
     </div>

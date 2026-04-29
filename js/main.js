@@ -1459,11 +1459,11 @@ function updatePieceList(owner) {
   const pcHand = document.getElementById(`${owner}-hand`);
   if (pcHand) buildHandChips(pcHand, owner);
 
-  // Mobile tab panels
-  const mobPieces = document.getElementById(`mob-${owner}-pieces`);
-  if (mobPieces) buildPieceChips(mobPieces, owner);
-  const mobHand = document.getElementById(`mob-${owner}-hand`);
-  if (mobHand) buildHandChips(mobHand, owner);
+  // Mobile left-peek panels
+  const lpPieces = document.getElementById(`mob-lp-${owner}-pieces`);
+  if (lpPieces) buildPieceChips(lpPieces, owner);
+  const lpHand = document.getElementById(`mob-lp-${owner}-hand`);
+  if (lpHand) buildHandChips(lpHand, owner);
 }
 
 // ── Log ──────────────────────────────────────────────────────────
