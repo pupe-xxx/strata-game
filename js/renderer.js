@@ -454,36 +454,45 @@ const Renderer = (() => {
     }
   }
 
-  /** Draw reserved movement paths for P1 pieces */
+  /** Draw movement paths: reserved (2-turn) AND queued normal MOVE actions */
   function drawReservedPaths(state, layer) {
+    // ── 2ターン予約移動経路 ──
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
         if (!isValidCell(r, c)) continue;
         const p = state[layer][r][c].piece;
         if (!p || p.owner !== 'p1' || !p.reservedMove) continue;
         const { toR, toC, viaR, viaC } = p.reservedMove;
-        const src = cellToScreen(r, c);
-        const dst = cellToScreen(toR, toC);
-        // Draw dashed arrow from source to destination
-        ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        if (viaR != null) {
-          const via = cellToScreen(viaR, viaC);
-          ctx.lineTo(via.x, via.y);
-        }
-        ctx.lineTo(dst.x, dst.y);
-        ctx.strokeStyle = 'rgba(100,200,255,0.7)';
-        ctx.lineWidth = 2 * scale;
-        ctx.setLineDash([4 * scale, 3 * scale]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // Arrow head at destination
-        ctx.beginPath();
-        ctx.arc(dst.x, dst.y, 4 * scale, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(100,200,255,0.9)';
-        ctx.fill();
+        drawMovePath(cellToScreen(r, c), cellToScreen(toR, toC),
+                     viaR != null ? cellToScreen(viaR, viaC) : null);
       }
     }
+
+    // ── キュー済み通常MOVE経路（1ターン移動） ──
+    for (const action of (state.playerActions ?? [])) {
+      if (action.type !== 'MOVE' || action.fromLayer !== layer) continue;
+      drawMovePath(
+        cellToScreen(action.fromR, action.fromC),
+        cellToScreen(action.toR,   action.toC),
+        null
+      );
+    }
+  }
+
+  function drawMovePath(src, dst, via) {
+    ctx.beginPath();
+    ctx.moveTo(src.x, src.y);
+    if (via) ctx.lineTo(via.x, via.y);
+    ctx.lineTo(dst.x, dst.y);
+    ctx.strokeStyle = 'rgba(100,200,255,0.7)';
+    ctx.lineWidth   = 2 * scale;
+    ctx.setLineDash([4 * scale, 3 * scale]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(dst.x, dst.y, 4 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(100,200,255,0.9)';
+    ctx.fill();
   }
 
   /** Draw ZOC overlay for enemy pieces threatening p1 */
