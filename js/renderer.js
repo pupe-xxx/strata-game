@@ -52,14 +52,20 @@ const Renderer = (() => {
       }
     }
 
-    const scaleW = availW  / CONFIG.CANVAS_W;
-    const scaleH = availH  / CONFIG.CANVAS_H;
+    // モバイルはPC向け横長キャンバスではなく盤に合わせたコンパクトサイズを使用
+    const canvasW = isMobile ? 600 : CONFIG.CANVAS_W;
+    const canvasH = isMobile ? 700 : CONFIG.CANVAS_H;
+    const originX = isMobile ? 300 : CONFIG.ORIGIN_X;
+    const originY = isMobile ? 350 : CONFIG.ORIGIN_Y;
+
+    const scaleW = availW  / canvasW;
+    const scaleH = availH  / canvasH;
     scale        = Math.max(0.28, Math.min(scaleW, scaleH, 2.5));
-    canvas.width  = Math.round(CONFIG.CANVAS_W * scale);
-    canvas.height = Math.round(CONFIG.CANVAS_H * scale);
+    canvas.width  = Math.round(canvasW * scale);
+    canvas.height = Math.round(canvasH * scale);
     HEX = CONFIG.HEX_SIZE * scale;
-    OX  = CONFIG.ORIGIN_X * scale;
-    OY  = CONFIG.ORIGIN_Y * scale;
+    OX  = originX * scale;
+    OY  = originY * scale;
   }
 
   // ── Hex coordinate math ──────────────────────────────────────────

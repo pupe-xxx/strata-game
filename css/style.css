@@ -593,13 +593,13 @@ html, body {
   #info-tabs { display: flex; }
   .tab-panel { padding: 4px; }
 
-  /* ── 盤エリア（最大確保） ── */
+  /* ── 盤エリア（最大確保・下寄せ） ── */
   #board-wrapper {
     grid-area: board;
     position: relative;
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
     overflow: hidden;
     min-height: 0;
     padding: 0;
