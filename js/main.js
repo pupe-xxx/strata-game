@@ -896,8 +896,6 @@ function clearInfoPanel() {
   document.getElementById('info-empty').style.display   = 'block';
   document.getElementById('info-content').style.display = 'none';
   document.body.classList.remove('piece-selected');
-  const pipBtn = document.getElementById('btn-piece-info');
-  if (pipBtn) pipBtn.style.display = 'none';
   if (isMobile()) {
     switchInfoTab('you');
   } else {
@@ -973,10 +971,6 @@ function selectPiece(layer, r, c) {
   updatePieceInfoPopup(piece, def, layer);
   if (_peekType === 'piece') syncPeekPiece();
   document.body.classList.add('piece-selected');
-  if (isMobile()) {
-    const btn = document.getElementById('btn-piece-info');
-    if (btn) btn.style.display = '';
-  }
   // PC: switch panels manually. Mobile: CSS (body.piece-selected) handles it.
   if (!isMobile()) {
     document.getElementById('tab-you-panel').style.display      = 'none';

@@ -34,23 +34,29 @@ html, body {
 #header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 5px 14px;
+  gap: 8px;
+  padding: 3px 10px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
 #logo {
-  font-size: 21px;
+  font-size: 14px;
   font-weight: bold;
-  letter-spacing: 4px;
+  letter-spacing: 3px;
   color: var(--accent);
-  text-shadow: 0 0 12px var(--accent);
+  text-shadow: 0 0 8px var(--accent);
 }
 
-#header-info { display: flex; gap: 8px; flex: 1; align-items: center; }
-#turn-display { color: var(--gold); font-size: 14px; flex-shrink: 0; }
+#header-info { display: flex; gap: 6px; flex: 1; align-items: center; }
+#turn-display { color: var(--gold); font-size: 11px; flex-shrink: 0; }
+
+/* ヘッダーボタン共通（上書き） */
+#btn-log-popup, #btn-piece-info {
+  padding: 3px 8px;
+  font-size: 11px;
+}
 
 #game-layout {
   display: flex;
