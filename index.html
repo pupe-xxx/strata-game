@@ -194,6 +194,36 @@
       </div>
     </div>
 
+    <!-- ===== SIDE PEEK（ログ / 駒情報） ===== -->
+    <div id="side-peek">
+      <div id="side-peek-overlay"></div>
+      <div id="side-peek-panel">
+        <div class="side-peek-header">
+          <span id="side-peek-title">ログ</span>
+          <button id="btn-close-peek" class="mob-popup-close">✕</button>
+        </div>
+
+        <!-- ログセクション -->
+        <div id="sp-log" class="sp-section" style="display:none">
+          <div id="sp-log-list"></div>
+        </div>
+
+        <!-- 駒情報セクション -->
+        <div id="sp-piece" class="sp-section" style="display:none">
+          <div id="sp-piece-name"></div>
+          <div id="sp-hp"></div>
+          <div id="sp-status" class="info-status" style="margin-bottom:6px;"></div>
+          <hr class="info-divider">
+          <div class="info-label">移動</div><div id="sp-move" class="info-value"></div>
+          <div class="info-label">攻撃</div><div id="sp-attack" class="info-value"></div>
+          <div class="info-label">地形変形</div><div id="sp-terrain" class="info-value"></div>
+          <div class="info-label">スキル</div><div id="sp-skill" class="info-value skill-value"></div>
+          <hr class="info-divider">
+          <div class="info-label">特性</div><div id="sp-trait" class="info-value trait-value"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Log popup (mobile) -->
     <div id="log-popup" class="mob-popup-overlay" style="display:none">
       <div id="log-popup-box" class="mob-popup-box">

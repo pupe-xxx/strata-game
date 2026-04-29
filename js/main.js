@@ -373,14 +373,20 @@ function bindEvents() {
     btn.addEventListener('click', () => applyTerrainDir(btn.dataset.mobDir));
   });
 
-  // Mobile: log popup
-  document.getElementById('btn-log-popup')?.addEventListener('click', () => {
-    document.getElementById('log-popup').style.display = 'flex';
-  });
+  // Side peek handlers
   const closeFn = (el, hide) => {
     el?.addEventListener('click',    e => { e.stopPropagation(); hide(); });
     el?.addEventListener('touchend', e => { e.preventDefault(); e.stopPropagation(); hide(); });
   };
+  document.getElementById('btn-log-popup')?.addEventListener('click', () => openSidePeek('log'));
+  document.getElementById('btn-piece-info')?.addEventListener('click', () => openSidePeek('piece'));
+  closeFn(document.getElementById('btn-close-peek'), closeSidePeek);
+  document.getElementById('side-peek-overlay')?.addEventListener('click', closeSidePeek);
+  document.getElementById('side-peek-overlay')?.addEventListener('touchend', e => {
+    e.preventDefault(); closeSidePeek();
+  });
+
+  // 旧ポップアップ（ログ）— 後方互換
   closeFn(document.getElementById('btn-close-log'), () => {
     document.getElementById('log-popup').style.display = 'none';
   });
@@ -388,17 +394,8 @@ function bindEvents() {
     if (e.target === document.getElementById('log-popup'))
       document.getElementById('log-popup').style.display = 'none';
   });
-
-  // 駒情報 popup
-  document.getElementById('btn-piece-info')?.addEventListener('click', () => {
-    document.getElementById('piece-info-popup').style.display = 'flex';
-  });
   closeFn(document.getElementById('btn-close-piece-info'), () => {
     document.getElementById('piece-info-popup').style.display = 'none';
-  });
-  document.getElementById('piece-info-popup')?.addEventListener('click', e => {
-    if (e.target === document.getElementById('piece-info-popup'))
-      document.getElementById('piece-info-popup').style.display = 'none';
   });
 
   // 手持ち popup（あなた/相手タブ → モバイルはポップアップ）
@@ -974,6 +971,7 @@ function selectPiece(layer, r, c) {
   // Update info panel
   updateInfoPanel(piece, def, layer);
   updatePieceInfoPopup(piece, def, layer);
+  if (_peekType === 'piece') syncPeekPiece();
   document.body.classList.add('piece-selected');
   if (isMobile()) {
     const btn = document.getElementById('btn-piece-info');
@@ -1520,6 +1518,71 @@ function addLog(msg, cls = '') {
     popupEl.prepend(entry);
     while (popupEl.children.length > 60) popupEl.removeChild(popupEl.lastChild);
   }
+
+  // Side peek log mirror
+  const spLog = document.getElementById('sp-log-list');
+  if (spLog) {
+    const entry = document.createElement('div');
+    entry.className = className;
+    entry.textContent = msg;
+    spLog.prepend(entry);
+    while (spLog.children.length > 60) spLog.removeChild(spLog.lastChild);
+  }
+}
+
+// ── Side Peek ─────────────────────────────────────────────────────
+let _peekType = null;
+
+function openSidePeek(type) {
+  _peekType = type;
+  const peek  = document.getElementById('side-peek');
+  const title = document.getElementById('side-peek-title');
+  document.getElementById('sp-log').style.display   = type === 'log'   ? 'flex' : 'none';
+  document.getElementById('sp-piece').style.display = type === 'piece' ? 'flex' : 'none';
+
+  if (type === 'log') {
+    title.textContent = 'ログ';
+  } else if (type === 'piece') {
+    title.textContent = '駒情報';
+    syncPeekPiece();
+  }
+  peek.classList.add('open');
+}
+
+function closeSidePeek() {
+  document.getElementById('side-peek').classList.remove('open');
+  _peekType = null;
+}
+
+function syncPeekPiece() {
+  if (!G || !G.selected) return;
+  const { layer, r, c } = G.selected;
+  const piece = getPieceAt(G, layer, r, c);
+  if (!piece) return;
+  const def   = CONFIG.PIECES[piece.type];
+  const emoji = CONFIG.PIECE_EMOJI[piece.type];
+  const lbl   = CONFIG.PIECE_LABEL[piece.type];
+  const owner = piece.owner === 'p1' ? 'あなた' : 'CPU';
+
+  document.getElementById('sp-piece-name').textContent =
+    `${emoji} ${lbl}`;
+  document.getElementById('sp-hp').textContent =
+    `HP ${piece.hp}/${piece.maxHp}  高さ ${def.height}  ${owner}  ${layer === 'surface' ? '表層' : '深層'}`;
+
+  const statuses = [
+    piece.trapped    ? '⚠ 穴に捕まっています' : '',
+    piece.reviving   ? `⚠ 復活まで${piece.reviveTimer}T` : '',
+    piece.vineSlowed ? '🌿 蔦減速' : '',
+    piece.surrounded ? '🔴 包囲状態' : '',
+  ].filter(Boolean).join(' / ');
+  document.getElementById('sp-status').textContent = statuses;
+
+  const info = buildPieceInfo(piece, def);
+  document.getElementById('sp-move').textContent    = info.move;
+  document.getElementById('sp-attack').textContent  = info.attack;
+  document.getElementById('sp-terrain').textContent = info.terrain;
+  document.getElementById('sp-skill').textContent   = info.skill;
+  document.getElementById('sp-trait').textContent   = info.trait;
 }
 
 // ── Game over ─────────────────────────────────────────────────────
