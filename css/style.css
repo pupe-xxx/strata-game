@@ -498,6 +498,88 @@ html, body {
 .paint-btn[data-color="yellow"] { background:#3a3010; border-color:#ffd700; color:#ffd700; }
 .paint-btn[data-color="blue"]   { background:#0d2038; border-color:#4fc3f7; color:#4fc3f7; }
 
+/* ===== CONFIRM ZONE（ターン確定 / 地形メニュー切り替え） ===== */
+#confirm-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+#confirm-zone #btn-confirm { width: 100%; }
+#confirm-zone #terrain-menu { display: flex; gap: 4px; }
+#confirm-zone #terrain-menu .terrain-opt { flex: 1; }
+
+/* ===== 占領状況 折りたたみ（スコア行 + トグル） ===== */
+#occ-score-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+#occ-score-row #occ-score-display { flex: 1; }
+.occ-toggle-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--font);
+  font-size: 13px;
+  padding: 2px 8px;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  transition: transform .2s;
+}
+.occ-toggle-btn.open { transform: rotate(180deg); }
+#occ-detail.collapsed { display: none !important; }
+
+/* ===== POPUP 共通スタイル ===== */
+.mob-popup-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.75);
+  z-index: 80; display: flex; align-items: center; justify-content: center;
+}
+.mob-popup-box {
+  width: 88%; max-height: 80vh;
+  background: var(--panel); border: 2px solid var(--accent);
+  border-radius: 12px; display: flex; flex-direction: column;
+  box-shadow: 0 0 30px rgba(79,195,247,.2); overflow: hidden;
+}
+.mob-popup-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  font-size: 15px; font-weight: bold; color: var(--accent);
+}
+.mob-popup-close {
+  background: var(--btn); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 18px; border-radius: var(--radius); cursor: pointer;
+  font-family: var(--font); font-size: 15px;
+  min-width: 48px; min-height: 44px;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  pointer-events: auto;
+}
+.mob-popup-body {
+  flex: 1; overflow-y: auto; padding: 12px 16px 20px;
+}
+
+/* 駒情報ポップアップ */
+#piece-info-popup { }
+#piece-info-popup-box { }
+#piece-info-popup-content { font-size: 13px; display: flex; flex-direction: column; gap: 3px; }
+#pip-name-header { font-size: 15px; font-weight: bold; color: var(--accent); }
+
+/* 手持ちポップアップ */
+#hand-popup-content .piece-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+#hand-popup-content .hand-area  { display: flex; flex-wrap: wrap; gap: 6px; }
+#hand-popup-content .piece-chip { font-size: 13px; padding: 3px 8px; }
+#hand-popup-content .hand-chip  { font-size: 13px; padding: 3px 8px; }
+
+/* ヘッダーボタン共通 */
+#btn-piece-info, #btn-log-popup {
+  padding: 5px 12px; background: var(--btn); border: 1px solid var(--border);
+  color: var(--text-dim); border-radius: var(--radius); cursor: pointer;
+  font-family: var(--font); font-size: 13px; touch-action: manipulation;
+}
+
 /* ===== GAME OVER ===== */
 #gameover-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.85);
@@ -533,9 +615,10 @@ html, body {
 }
 #btn-close-log {
   background: var(--btn); border: 1px solid var(--border); color: var(--text);
-  padding: 6px 16px; border-radius: var(--radius); cursor: pointer; font-family: var(--font);
-  font-size: 15px; min-width: 44px; min-height: 36px;
+  padding: 8px 18px; border-radius: var(--radius); cursor: pointer; font-family: var(--font);
+  font-size: 15px; min-width: 48px; min-height: 44px;
   -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+  pointer-events: auto; position: relative; z-index: 1;
 }
 #log-popup-list {
   flex: 1; overflow-y: auto; padding: 10px 16px 20px;
@@ -648,8 +731,11 @@ html, body {
   }
   .slot-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-height: none; }
 
-  /* ターン確定 */
-  #btn-confirm { width: 100%; padding: 10px; font-size: 15px; order: 1; }
+  /* confirm-zone（ターン確定 / 地形）*/
+  #confirm-zone { order: 1; }
+  #btn-confirm  { width: 100%; padding: 10px; font-size: 15px; }
+  /* 占領トグルボタン：モバイルのみ表示 */
+  .occ-toggle-btn { display: block; }
 
   /* アクションボタン6個：横1列 */
   #action-btns {

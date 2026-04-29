@@ -15,6 +15,23 @@ let currentPaintColor  = 'red'; // 現在の選択色（右クリック/長押�
 let _longPressTimer = null;
 let _longPressStart = null;
 
+// Pinch zoom
+let _zoomLevel     = 1.0;
+let _pinchStartDist = null;
+let _pinchStartZoom = 1.0;
+
+function getPinchDist(t) {
+  const dx = t[0].clientX - t[1].clientX;
+  const dy = t[0].clientY - t[1].clientY;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+function applyCanvasZoom() {
+  const cv = document.getElementById('game-canvas');
+  if (!cv) return;
+  cv.style.transformOrigin = 'center bottom';
+  cv.style.transform = _zoomLevel === 1.0 ? '' : `scale(${_zoomLevel})`;
+}
+
 // Damage flash: pieceId → expiry timestamp (display-only, not in state)
 const damageFlash = new Map();
 
@@ -147,6 +164,9 @@ function initGame() {
     const occSection = document.getElementById('occ-section');
     const sidePanel  = document.getElementById('side-panel');
     if (occSection && sidePanel) sidePanel.insertBefore(occSection, sidePanel.firstChild);
+    // 占領詳細を初期折りたたみ状態に
+    const occDetail = document.getElementById('occ-detail');
+    if (occDetail) occDetail.classList.add('collapsed');
   }
   Renderer.init(document.getElementById('game-canvas'));
   Renderer.resize();
@@ -189,6 +209,7 @@ function bindEvents() {
   canvas.addEventListener('click',       onCanvasClick);
   canvas.addEventListener('contextmenu', onCanvasRightClick);
   canvas.addEventListener('touchstart',  onCanvasTouchStart, { passive: false });
+  canvas.addEventListener('touchmove',   onCanvasTouchMove,  { passive: false });
   canvas.addEventListener('touchend',    onCanvasTouchEnd,   { passive: false });
 
   // Layer toggle (buttons)
@@ -327,12 +348,54 @@ function bindEvents() {
   document.getElementById('btn-log-popup')?.addEventListener('click', () => {
     document.getElementById('log-popup').style.display = 'flex';
   });
-  document.getElementById('btn-close-log')?.addEventListener('click', () => {
+  const closeFn = (el, hide) => {
+    el?.addEventListener('click',    e => { e.stopPropagation(); hide(); });
+    el?.addEventListener('touchend', e => { e.preventDefault(); e.stopPropagation(); hide(); });
+  };
+  closeFn(document.getElementById('btn-close-log'), () => {
     document.getElementById('log-popup').style.display = 'none';
   });
   document.getElementById('log-popup')?.addEventListener('click', e => {
     if (e.target === document.getElementById('log-popup'))
       document.getElementById('log-popup').style.display = 'none';
+  });
+
+  // 駒情報 popup
+  document.getElementById('btn-piece-info')?.addEventListener('click', () => {
+    document.getElementById('piece-info-popup').style.display = 'flex';
+  });
+  closeFn(document.getElementById('btn-close-piece-info'), () => {
+    document.getElementById('piece-info-popup').style.display = 'none';
+  });
+  document.getElementById('piece-info-popup')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('piece-info-popup'))
+      document.getElementById('piece-info-popup').style.display = 'none';
+  });
+
+  // 手持ち popup（あなた/相手タブ → モバイルはポップアップ）
+  document.querySelectorAll('.info-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (isMobile()) {
+        showHandPopup(btn.dataset.tab === 'you' ? 'p1' : 'p2');
+      } else {
+        switchInfoTab(btn.dataset.tab);
+      }
+    });
+  });
+  closeFn(document.getElementById('btn-close-hand'), () => {
+    document.getElementById('hand-popup').style.display = 'none';
+  });
+  document.getElementById('hand-popup')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('hand-popup'))
+      document.getElementById('hand-popup').style.display = 'none';
+  });
+
+  // 占領状況トグル
+  document.getElementById('btn-occ-toggle')?.addEventListener('click', () => {
+    const detail = document.getElementById('occ-detail');
+    const btn    = document.getElementById('btn-occ-toggle');
+    detail.classList.toggle('collapsed');
+    btn.classList.toggle('open', !detail.classList.contains('collapsed'));
   });
 
   // Slot drag & drop (swap action order)
@@ -404,11 +467,27 @@ function setLayer(layer) {
 }
 
 // ── Canvas interaction ────────────────────────────────────────────
+function clientToCanvas(el, cx, cy) {
+  const rect = el.getBoundingClientRect();
+  return {
+    px: (cx - rect.left) * (el.width / rect.width),
+    py: (cy - rect.top)  * (el.height / rect.height),
+  };
+}
+
 function onCanvasTouchStart(e) {
   e.preventDefault();
-  const rect  = e.target.getBoundingClientRect();
+  if (e.touches.length === 2) {
+    _pinchStartDist = getPinchDist(e.touches);
+    _pinchStartZoom = _zoomLevel;
+    _longPressStart = null;
+    if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+    return;
+  }
+  if (_pinchStartDist !== null) return;
   const touch = e.changedTouches[0];
-  _longPressStart = { px: touch.clientX - rect.left, py: touch.clientY - rect.top };
+  const { px, py } = clientToCanvas(e.target, touch.clientX, touch.clientY);
+  _longPressStart = { px, py };
   _longPressTimer = setTimeout(() => {
     if (_longPressStart) {
       cyclePaintMarker(_longPressStart.px, _longPressStart.py);
@@ -417,25 +496,34 @@ function onCanvasTouchStart(e) {
   }, 500);
 }
 
+function onCanvasTouchMove(e) {
+  if (e.touches.length !== 2 || _pinchStartDist === null) return;
+  e.preventDefault();
+  const dist  = getPinchDist(e.touches);
+  _zoomLevel  = Math.max(1.0, Math.min(3.5, _pinchStartZoom * (dist / _pinchStartDist)));
+  applyCanvasZoom();
+}
+
 function onCanvasTouchEnd(e) {
   e.preventDefault();
+  if (e.touches.length < 2) _pinchStartDist = null;
   if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
-  if (!_longPressStart) return; // was long-press, handled already
-  const rect  = e.target.getBoundingClientRect();
+  if (!_longPressStart) return;
   const touch = e.changedTouches[0];
-  handleCanvasInteraction(touch.clientX - rect.left, touch.clientY - rect.top, false);
+  const { px, py } = clientToCanvas(e.target, touch.clientX, touch.clientY);
+  handleCanvasInteraction(px, py, false);
   _longPressStart = null;
 }
 
 function onCanvasClick(e) {
-  const rect = e.target.getBoundingClientRect();
-  handleCanvasInteraction(e.clientX - rect.left, e.clientY - rect.top, false);
+  const { px, py } = clientToCanvas(e.target, e.clientX, e.clientY);
+  handleCanvasInteraction(px, py, false);
 }
 
 function onCanvasRightClick(e) {
   e.preventDefault();
-  const rect = e.target.getBoundingClientRect();
-  cyclePaintMarker(e.clientX - rect.left, e.clientY - rect.top);
+  const { px, py } = clientToCanvas(e.target, e.clientX, e.clientY);
+  cyclePaintMarker(px, py);
 }
 
 /** 右クリック/長押し：
@@ -642,10 +730,74 @@ function updateInfoPanel(piece, def, layer) {
   document.getElementById('info-trait').textContent   = info.trait;
 }
 
+function updatePieceInfoPopup(piece, def, layer) {
+  const emoji = CONFIG.PIECE_EMOJI[piece.type];
+  const lbl   = CONFIG.PIECE_LABEL[piece.type];
+  const owner = piece.owner === 'p1' ? 'あなた' : 'CPU';
+  const el = id => document.getElementById(id);
+  el('pip-name-header').textContent = `${emoji} ${lbl} (${owner})`;
+  el('pip-hp').textContent          = `HP ${piece.hp}/${piece.maxHp}  高さ ${def.height}  ${layer === 'surface' ? '表層' : '深層'}`;
+  const statuses = [
+    piece.trapped    ? '⚠ 穴に捕まっています' : '',
+    piece.reviving   ? `⚠ 復活まで${piece.reviveTimer}T` : '',
+    piece.vineSlowed ? '🌿 蔦減速' : '',
+    piece.surrounded ? '🔴 包囲状態' : '',
+  ].filter(Boolean).join(' / ');
+  el('pip-status').textContent = statuses;
+  const info = buildPieceInfo(piece, def);
+  el('pip-move').textContent    = info.move;
+  el('pip-attack').textContent  = info.attack;
+  el('pip-terrain').textContent = info.terrain;
+  el('pip-skill').textContent   = info.skill;
+  el('pip-trait').textContent   = info.trait;
+}
+
+function buildPieceInfo(piece, def) {
+  const moveEl   = document.getElementById('info-move');
+  const atkEl    = document.getElementById('info-attack');
+  const trnEl    = document.getElementById('info-terrain');
+  const sklEl    = document.getElementById('info-skill');
+  const traitEl  = document.getElementById('info-trait');
+  return {
+    move:    moveEl?.textContent    || `${def.moveDist}マス`,
+    attack:  atkEl?.textContent     || `射程${def.atkRange}`,
+    terrain: trnEl?.textContent     || `射程${def.terrainRange}`,
+    skill:   sklEl?.textContent     || '—',
+    trait:   traitEl?.textContent   || '—',
+  };
+}
+
+function showHandPopup(owner) {
+  const isP1    = owner === 'p1';
+  const title   = isP1 ? 'あなたの駒' : '相手の駒';
+  document.getElementById('hand-popup-title').textContent = title;
+
+  const content = document.getElementById('hand-popup-content');
+  content.innerHTML = '';
+
+  const piecesEl = document.getElementById(isP1 ? 'mob-p1-pieces' : 'mob-p2-pieces');
+  const handEl   = document.getElementById(isP1 ? 'mob-p1-hand'   : 'mob-p2-hand');
+  if (piecesEl) {
+    const pl = document.createElement('div');
+    pl.className = 'piece-list';
+    pl.innerHTML = piecesEl.innerHTML;
+    content.appendChild(pl);
+  }
+  if (handEl && handEl.children.length > 0) {
+    const ha = document.createElement('div');
+    ha.className = 'hand-area';
+    ha.innerHTML = handEl.innerHTML;
+    content.appendChild(ha);
+  }
+  document.getElementById('hand-popup').style.display = 'flex';
+}
+
 function clearInfoPanel() {
   document.getElementById('info-empty').style.display   = 'block';
   document.getElementById('info-content').style.display = 'none';
   document.body.classList.remove('piece-selected');
+  const pipBtn = document.getElementById('btn-piece-info');
+  if (pipBtn) pipBtn.style.display = 'none';
   if (isMobile()) {
     switchInfoTab('you');
   } else {
@@ -718,7 +870,12 @@ function selectPiece(layer, r, c) {
 
   // Update info panel
   updateInfoPanel(piece, def, layer);
+  updatePieceInfoPopup(piece, def, layer);
   document.body.classList.add('piece-selected');
+  if (isMobile()) {
+    const btn = document.getElementById('btn-piece-info');
+    if (btn) btn.style.display = '';
+  }
   // PC: switch panels manually. Mobile: CSS (body.piece-selected) handles it.
   if (!isMobile()) {
     document.getElementById('tab-you-panel').style.display      = 'none';
@@ -767,6 +924,7 @@ function deselect() {
   document.getElementById('terrain-menu').style.display     = 'none';
   document.getElementById('mob-terrain-menu').style.display = 'none';
   document.getElementById('roller-menu').style.display      = 'none';
+  if (isMobile()) document.getElementById('btn-confirm').style.display = '';
   // 地形ボタン選択状態リセット
   document.querySelectorAll('.terrain-opt').forEach(b => b.classList.remove('selected'));
   clearInfoPanel();
@@ -782,6 +940,7 @@ function setActionMode(mode) {
   if (mode === 'TERRAIN') {
     document.getElementById('terrain-menu').style.display = 'flex';
     document.getElementById('mob-terrain-menu').style.display = 'flex';
+    if (isMobile()) document.getElementById('btn-confirm').style.display = 'none';
     if (G.terrainDir === null) {
       // 方向未選択 → 選択待ちのまま
       G.actionMode = 'TERRAIN';
@@ -947,6 +1106,7 @@ function queueAction(tr, tc, tLayer) {
   document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('terrain-menu').style.display     = 'none';
   document.getElementById('mob-terrain-menu').style.display = 'none';
+  if (isMobile()) document.getElementById('btn-confirm').style.display = '';
   clearInfoPanel();
 
   const remaining = 2 - G.playerActions.length;
