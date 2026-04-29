@@ -1543,7 +1543,7 @@ function openLeftPeek(owner) {
   document.getElementById('lp-p1-section').style.display = showP1 ? 'flex' : 'none';
   document.getElementById('lp-p2-section').style.display = showP2 ? 'flex' : 'none';
   document.getElementById('left-peek-title').textContent =
-    owner === 'p1' ? 'あなた' : owner === 'p2' ? '相手' : 'デッキ';
+    owner === 'p1' ? 'あなた' : owner === 'p2' ? '相手' : '部隊';
   peek.style.display = 'block';
   peek.offsetHeight;
   peek.classList.add('open');
