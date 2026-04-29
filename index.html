@@ -121,13 +121,16 @@
             <div class="slot" id="slot-1" draggable="true"><span class="slot-num">②</span><span class="slot-text">未設定</span><button class="slot-clear" data-idx="1" style="display:none">✕</button></div>
           </div>
 
-          <!-- ターン確定 / 地形メニュー（同位置で切り替え） -->
+          <!-- ターン確定 / 地形メニュー（左5/6） + メモボタン（右1/6） -->
           <div id="confirm-zone">
-            <button id="btn-confirm" disabled>ターン確定</button>
-            <div id="terrain-menu" style="display:none">
-              <button class="terrain-opt" data-dir="up"   id="btn-terrain-up">凸（壁）</button>
-              <button class="terrain-opt" data-dir="down" id="btn-terrain-down">凹（穴）</button>
+            <div id="confirm-main">
+              <button id="btn-confirm" disabled>ターン確定</button>
+              <div id="terrain-menu" style="display:none">
+                <button class="terrain-opt" data-dir="up"   id="btn-terrain-up">凸（壁）</button>
+                <button class="terrain-opt" data-dir="down" id="btn-terrain-down">凹（穴）</button>
+              </div>
             </div>
+            <button id="btn-memo" class="act-btn">メモ</button>
           </div>
 
           <!-- アクションボタン -->

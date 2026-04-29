@@ -36,6 +36,14 @@ let _panStartPY     = 0;
 let _panMoved       = false;
 const PAN_THRESHOLD = 8;
 
+// ダブルタップ検出（キャンバス）
+let _canvasDtTimer  = null;
+let _canvasDtPX     = 0;
+let _canvasDtPY     = 0;
+
+// メモモード
+let _memoMode       = false;
+
 function getPinchDist(t) {
   const dx = t[0].clientX - t[1].clientX;
   const dy = t[0].clientY - t[1].clientY;
@@ -411,6 +419,12 @@ function bindEvents() {
       document.getElementById('hand-popup').style.display = 'none';
   });
 
+  // メモモード切り替え
+  document.getElementById('btn-memo')?.addEventListener('click', () => {
+    _memoMode = !_memoMode;
+    document.getElementById('btn-memo').classList.toggle('active', _memoMode);
+  });
+
   // 占領状況トグル
   document.getElementById('btn-occ-toggle')?.addEventListener('click', () => {
     const detail = document.getElementById('occ-detail');
@@ -501,9 +515,9 @@ function onCanvasTouchStart(e) {
 
   if (e.touches.length === 2) {
     // ─ ピンチ開始 ─
-    if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
     _longPressStart = null;
     _panTouchId     = null;
+    if (_canvasDtTimer) { clearTimeout(_canvasDtTimer); _canvasDtTimer = null; }
 
     _pinchStartDist = getPinchDist(e.touches);
     _pinchStartZoom = _zoomLevel;
@@ -518,29 +532,20 @@ function onCanvasTouchStart(e) {
     return;
   }
 
-  if (_pinchStartDist !== null) return; // ピンチ中の余分タッチは無視
+  if (_pinchStartDist !== null) return;
 
   // ─ シングルタッチ ─
   const touch = e.touches[0];
+  _longPressStart = { x: touch.clientX, y: touch.clientY };
 
   if (_zoomLevel > 1.0) {
-    // ズーム中はパン開始
-    _panTouchId    = touch.identifier;
-    _panStartCX    = touch.clientX;
-    _panStartCY    = touch.clientY;
-    _panStartPX    = _panX;
-    _panStartPY    = _panY;
-    _panMoved      = false;
+    _panTouchId = touch.identifier;
+    _panStartCX = touch.clientX;
+    _panStartCY = touch.clientY;
+    _panStartPX = _panX;
+    _panStartPY = _panY;
+    _panMoved   = false;
   }
-
-  const { px, py } = clientToCanvas(e.target, touch.clientX, touch.clientY);
-  _longPressStart = { px, py };
-  _longPressTimer = setTimeout(() => {
-    if (_longPressStart) {
-      cyclePaintMarker(_longPressStart.px, _longPressStart.py);
-      _longPressStart = null;
-    }
-  }, 500);
 }
 
 function onCanvasTouchMove(e) {
@@ -582,17 +587,35 @@ function onCanvasTouchEnd(e) {
   e.preventDefault();
   if (e.touches.length < 2) _pinchStartDist = null;
   if (e.touches.length === 0) _panTouchId = null;
-  if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
 
-  // パン中だった場合はゲーム操作しない
+  // パン中はゲーム操作しない
   if (_panMoved) { _panMoved = false; _longPressStart = null; return; }
   _panMoved = false;
 
   if (!_longPressStart) return;
+  _longPressStart = null;
+
   const touch = e.changedTouches[0];
   const { px, py } = clientToCanvas(e.target, touch.clientX, touch.clientY);
-  handleCanvasInteraction(px, py, false);
-  _longPressStart = null;
+
+  // ─ ダブルタップ検出（層切り替え） ─
+  if (_canvasDtTimer) {
+    clearTimeout(_canvasDtTimer);
+    _canvasDtTimer = null;
+    setLayer(G.currentLayer === 'surface' ? 'depth' : 'surface');
+    return;
+  }
+
+  // ─ シングルタップ（250ms後に確定） ─
+  const savedPx = px, savedPy = py;
+  _canvasDtTimer = setTimeout(() => {
+    _canvasDtTimer = null;
+    if (_memoMode) {
+      cyclePaintMarker(savedPx, savedPy);
+    } else {
+      handleCanvasInteraction(savedPx, savedPy, false);
+    }
+  }, 250);
 }
 
 function onCanvasClick(e) {

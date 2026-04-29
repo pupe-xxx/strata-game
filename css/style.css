@@ -498,15 +498,23 @@ html, body {
 .paint-btn[data-color="yellow"] { background:#3a3010; border-color:#ffd700; color:#ffd700; }
 .paint-btn[data-color="blue"]   { background:#0d2038; border-color:#4fc3f7; color:#4fc3f7; }
 
-/* ===== CONFIRM ZONE（ターン確定 / 地形メニュー切り替え） ===== */
+/* ===== CONFIRM ZONE（ターン確定/地形メニュー + メモボタン） ===== */
 #confirm-zone {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  align-items: stretch;
+}
+#confirm-main {
+  flex: 5;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-#confirm-zone #btn-confirm { width: 100%; }
-#confirm-zone #terrain-menu { display: flex; gap: 4px; }
-#confirm-zone #terrain-menu .terrain-opt { flex: 1; }
+#confirm-main #btn-confirm { width: 100%; }
+#confirm-main #terrain-menu { display: flex; gap: 4px; width: 100%; }
+#confirm-main .terrain-opt { flex: 1; }
+#btn-memo { flex: 1; }
 
 /* ===== 占領状況 折りたたみ（スコア行 + トグル） ===== */
 #occ-score-row {
@@ -731,12 +739,14 @@ html, body {
   }
   .slot-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-height: none; }
 
-  /* confirm-zone（ターン確定 / 地形）— 高さを揃える */
-  #confirm-zone { order: 1; }
-  #confirm-zone #btn-confirm,
-  #confirm-zone #terrain-menu { min-height: 46px; box-sizing: border-box; }
-  #confirm-zone #btn-confirm  { width: 100%; padding: 10px; font-size: 15px; }
-  #confirm-zone .terrain-opt  { padding: 10px 4px; font-size: 15px; }
+  /* confirm-zone（ターン確定 / 地形 + メモ）— 高さを揃える */
+  #confirm-zone { order: 1; gap: 4px; }
+  #confirm-main { gap: 4px; }
+  #confirm-main #btn-confirm,
+  #confirm-main #terrain-menu { min-height: 46px; box-sizing: border-box; }
+  #confirm-main #btn-confirm  { width: 100%; padding: 10px; font-size: 15px; }
+  #confirm-main .terrain-opt  { padding: 10px 4px; font-size: 15px; }
+  #btn-memo { min-height: 46px; padding: 10px 2px; font-size: 13px; align-self: stretch; }
   /* 占領トグルボタン：モバイルのみ表示 */
   .occ-toggle-btn { display: block; }
 
