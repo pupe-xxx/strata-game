@@ -683,7 +683,7 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: flex-end;
-    overflow: hidden;
+    overflow: visible;
     min-height: 0;
     padding: 0;
     z-index: auto;
@@ -731,9 +731,12 @@ html, body {
   }
   .slot-text { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-height: none; }
 
-  /* confirm-zone（ターン確定 / 地形）*/
+  /* confirm-zone（ターン確定 / 地形）— 高さを揃える */
   #confirm-zone { order: 1; }
-  #btn-confirm  { width: 100%; padding: 10px; font-size: 15px; }
+  #confirm-zone #btn-confirm,
+  #confirm-zone #terrain-menu { min-height: 46px; box-sizing: border-box; }
+  #confirm-zone #btn-confirm  { width: 100%; padding: 10px; font-size: 15px; }
+  #confirm-zone .terrain-opt  { padding: 10px 4px; font-size: 15px; }
   /* 占領トグルボタン：モバイルのみ表示 */
   .occ-toggle-btn { display: block; }
 

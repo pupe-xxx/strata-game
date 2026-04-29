@@ -15,10 +15,26 @@ let currentPaintColor  = 'red'; // 現在の選択色（右クリック/長押�
 let _longPressTimer = null;
 let _longPressStart = null;
 
-// Pinch zoom
-let _zoomLevel     = 1.0;
+// Pinch zoom + pan
+let _zoomLevel      = 1.0;
+let _panX           = 0;
+let _panY           = 0;
 let _pinchStartDist = null;
 let _pinchStartZoom = 1.0;
+let _pinchMidSX     = 0; // pinch midpoint screen X
+let _pinchMidSY     = 0;
+let _pinchMidCX     = 0; // pinch midpoint canvas X (buffer px)
+let _pinchMidCY     = 0;
+let _pinchNatLeft   = 0; // canvas natural screen-left (without transform)
+let _pinchNatTop    = 0;
+// Single-finger pan
+let _panTouchId     = null;
+let _panStartCX     = 0;
+let _panStartCY     = 0;
+let _panStartPX     = 0;
+let _panStartPY     = 0;
+let _panMoved       = false;
+const PAN_THRESHOLD = 8;
 
 function getPinchDist(t) {
   const dx = t[0].clientX - t[1].clientX;
@@ -28,8 +44,13 @@ function getPinchDist(t) {
 function applyCanvasZoom() {
   const cv = document.getElementById('game-canvas');
   if (!cv) return;
-  cv.style.transformOrigin = 'center bottom';
-  cv.style.transform = _zoomLevel === 1.0 ? '' : `scale(${_zoomLevel})`;
+  if (_zoomLevel <= 1.0 && _panX === 0 && _panY === 0) {
+    cv.style.transform = '';
+    cv.style.transformOrigin = '';
+  } else {
+    cv.style.transformOrigin = '0 0';
+    cv.style.transform = `translate(${_panX}px,${_panY}px) scale(${_zoomLevel})`;
+  }
 }
 
 // Damage flash: pieceId → expiry timestamp (display-only, not in state)
@@ -477,15 +498,41 @@ function clientToCanvas(el, cx, cy) {
 
 function onCanvasTouchStart(e) {
   e.preventDefault();
+
   if (e.touches.length === 2) {
+    // ─ ピンチ開始 ─
+    if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+    _longPressStart = null;
+    _panTouchId     = null;
+
     _pinchStartDist = getPinchDist(e.touches);
     _pinchStartZoom = _zoomLevel;
-    _longPressStart = null;
-    if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+    _pinchMidSX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    _pinchMidSY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const cv   = e.target;
+    const rect = cv.getBoundingClientRect();
+    _pinchMidCX   = (_pinchMidSX - rect.left) * (cv.width  / rect.width);
+    _pinchMidCY   = (_pinchMidSY - rect.top)  * (cv.height / rect.height);
+    _pinchNatLeft = rect.left - _panX;
+    _pinchNatTop  = rect.top  - _panY;
     return;
   }
-  if (_pinchStartDist !== null) return;
-  const touch = e.changedTouches[0];
+
+  if (_pinchStartDist !== null) return; // ピンチ中の余分タッチは無視
+
+  // ─ シングルタッチ ─
+  const touch = e.touches[0];
+
+  if (_zoomLevel > 1.0) {
+    // ズーム中はパン開始
+    _panTouchId    = touch.identifier;
+    _panStartCX    = touch.clientX;
+    _panStartCY    = touch.clientY;
+    _panStartPX    = _panX;
+    _panStartPY    = _panY;
+    _panMoved      = false;
+  }
+
   const { px, py } = clientToCanvas(e.target, touch.clientX, touch.clientY);
   _longPressStart = { px, py };
   _longPressTimer = setTimeout(() => {
@@ -497,17 +544,50 @@ function onCanvasTouchStart(e) {
 }
 
 function onCanvasTouchMove(e) {
-  if (e.touches.length !== 2 || _pinchStartDist === null) return;
-  e.preventDefault();
-  const dist  = getPinchDist(e.touches);
-  _zoomLevel  = Math.max(1.0, Math.min(3.5, _pinchStartZoom * (dist / _pinchStartDist)));
-  applyCanvasZoom();
+  // ─ ピンチズーム ─
+  if (e.touches.length === 2 && _pinchStartDist !== null) {
+    e.preventDefault();
+    const newDist  = getPinchDist(e.touches);
+    const newZoom  = Math.max(1.0, Math.min(3.5, _pinchStartZoom * (newDist / _pinchStartDist)));
+    // ピンチ中心点を固定したまま拡縮
+    _panX      = _pinchMidSX - _pinchNatLeft - _pinchMidCX * newZoom;
+    _panY      = _pinchMidSY - _pinchNatTop  - _pinchMidCY * newZoom;
+    _zoomLevel = newZoom;
+    if (_zoomLevel <= 1.0) { _zoomLevel = 1.0; _panX = 0; _panY = 0; }
+    applyCanvasZoom();
+    return;
+  }
+
+  // ─ パン（1本指 ズーム中） ─
+  if (e.touches.length === 1 && _panTouchId !== null && _zoomLevel > 1.0) {
+    const touch = Array.from(e.touches).find(t => t.identifier === _panTouchId);
+    if (!touch) return;
+    const dx = touch.clientX - _panStartCX;
+    const dy = touch.clientY - _panStartCY;
+    if (!_panMoved && Math.sqrt(dx*dx + dy*dy) > PAN_THRESHOLD) {
+      _panMoved = true;
+      if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+      _longPressStart = null;
+    }
+    if (_panMoved) {
+      e.preventDefault();
+      _panX = _panStartPX + dx;
+      _panY = _panStartPY + dy;
+      applyCanvasZoom();
+    }
+  }
 }
 
 function onCanvasTouchEnd(e) {
   e.preventDefault();
   if (e.touches.length < 2) _pinchStartDist = null;
+  if (e.touches.length === 0) _panTouchId = null;
   if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+
+  // パン中だった場合はゲーム操作しない
+  if (_panMoved) { _panMoved = false; _longPressStart = null; return; }
+  _panMoved = false;
+
   if (!_longPressStart) return;
   const touch = e.changedTouches[0];
   const { px, py } = clientToCanvas(e.target, touch.clientX, touch.clientY);
