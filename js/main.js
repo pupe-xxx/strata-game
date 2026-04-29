@@ -156,15 +156,7 @@ function canUseRoller(pieceType) { return pieceType === 'ROLLER'; }
 function isMobile() { return window.innerWidth <= 700; }
 
 
-// ── Tab / panel switching ──────────────────────────────────────────
-function switchInfoTab(tabName) {
-  document.querySelectorAll('.info-tab').forEach(t =>
-    t.classList.toggle('active', t.dataset.tab === tabName));
-  document.getElementById('tab-you-panel').style.display      = tabName === 'you'      ? '' : 'none';
-  const cpuPanel = document.getElementById('tab-cpu-panel');
-  if (cpuPanel) cpuPanel.style.display                        = tabName === 'cpu'      ? '' : 'none';
-  document.getElementById('tab-selected-panel').style.display = tabName === 'selected' ? '' : 'none';
-}
+// ── Panel switching (tabs removed) ───────────────────────────────
 
 // Sync action button state to both desktop (#btn-X) and mobile (#mob-btn-X)
 function setActBtn(id, opts) {
@@ -346,11 +338,6 @@ function bindEvents() {
   // Confirm
   document.getElementById('btn-confirm').addEventListener('click', confirmTurn);
 
-  // Mobile: info tab buttons
-  document.querySelectorAll('.info-tab').forEach(btn => {
-    btn.addEventListener('click', () => switchInfoTab(btn.dataset.tab));
-  });
-
   // Mobile action buttons
   document.getElementById('mob-btn-vine')   ?.addEventListener('click', () => setActionMode('VINE'));
   document.getElementById('mob-btn-react')  ?.addEventListener('click', () => setActionMode('REACT'));
@@ -386,6 +373,15 @@ function bindEvents() {
     e.preventDefault(); closeSidePeek();
   });
 
+  // Left peek（あなた / 相手）
+  document.getElementById('btn-player1')?.addEventListener('click', () => openLeftPeek('p1'));
+  document.getElementById('btn-player2')?.addEventListener('click', () => openLeftPeek('p2'));
+  closeFn(document.getElementById('btn-close-left-peek'), closeLeftPeek);
+  document.getElementById('left-peek-overlay')?.addEventListener('click', closeLeftPeek);
+  document.getElementById('left-peek-overlay')?.addEventListener('touchend', e => {
+    e.preventDefault(); closeLeftPeek();
+  });
+
   // 旧ポップアップ（ログ）— 後方互換
   closeFn(document.getElementById('btn-close-log'), () => {
     document.getElementById('log-popup').style.display = 'none';
@@ -398,16 +394,6 @@ function bindEvents() {
     document.getElementById('piece-info-popup').style.display = 'none';
   });
 
-  // 手持ち popup（あなた/相手タブ → モバイルはポップアップ）
-  document.querySelectorAll('.info-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (isMobile()) {
-        showHandPopup(btn.dataset.tab === 'you' ? 'p1' : 'p2');
-      } else {
-        switchInfoTab(btn.dataset.tab);
-      }
-    });
-  });
   closeFn(document.getElementById('btn-close-hand'), () => {
     document.getElementById('hand-popup').style.display = 'none';
   });
@@ -893,12 +879,8 @@ function clearInfoPanel() {
   document.getElementById('info-empty').style.display   = 'block';
   document.getElementById('info-content').style.display = 'none';
   document.body.classList.remove('piece-selected');
-  if (isMobile()) {
-    switchInfoTab('you');
-  } else {
-    document.getElementById('tab-selected-panel').style.display = 'none';
-    document.getElementById('tab-you-panel').style.display      = '';
-  }
+  document.getElementById('tab-selected-panel').style.display = 'none';
+  document.getElementById('tab-you-panel').style.display      = '';
 }
 
 // ── Piece selection ───────────────────────────────────────────────
@@ -968,11 +950,8 @@ function selectPiece(layer, r, c) {
   updatePieceInfoPopup(piece, def, layer);
   if (_peekType === 'piece') syncPeekPiece();
   document.body.classList.add('piece-selected');
-  // PC: switch panels manually. Mobile: CSS (body.piece-selected) handles it.
-  if (!isMobile()) {
-    document.getElementById('tab-you-panel').style.display      = 'none';
-    document.getElementById('tab-selected-panel').style.display = '';
-  }
+  document.getElementById('tab-you-panel').style.display      = 'none';
+  document.getElementById('tab-selected-panel').style.display = '';
 }
 
 function selectHandPiece(piece) {
@@ -985,6 +964,7 @@ function selectHandPiece(piece) {
   G.attackCells = [];
   G.terrainDir  = null;
   clearInfoPanel();
+  closeLeftPeek();
   // P1 deploy zone: bottom 3 hex rows (high row indices), valid hex cells only
   const deployStart = CONFIG.BOARD_SIZE - 4;
   for (let r = deployStart; r < CONFIG.BOARD_SIZE; r++) {
@@ -1548,6 +1528,29 @@ function closeSidePeek() {
   peek.classList.remove('open');
   _peekType = null;
   // トランジション(0.25s)完了後にdisplay:none（transitionend非依存で確実）
+  setTimeout(() => {
+    if (!peek.classList.contains('open')) peek.style.display = 'none';
+  }, 300);
+}
+
+// ── Left Peek（あなた / 相手）────────────────────────────────────
+let _leftPeekOwner = null;
+
+function openLeftPeek(owner) {
+  _leftPeekOwner = owner;
+  const peek = document.getElementById('left-peek');
+  document.getElementById('lp-p1-section').style.display = owner === 'p1' ? 'flex' : 'none';
+  document.getElementById('lp-p2-section').style.display = owner === 'p2' ? 'flex' : 'none';
+  document.getElementById('left-peek-title').textContent = owner === 'p1' ? 'あなた' : '相手';
+  peek.style.display = 'block';
+  peek.offsetHeight;
+  peek.classList.add('open');
+}
+
+function closeLeftPeek() {
+  const peek = document.getElementById('left-peek');
+  peek.classList.remove('open');
+  _leftPeekOwner = null;
   setTimeout(() => {
     if (!peek.classList.contains('open')) peek.style.display = 'none';
   }, 300);

@@ -13,6 +13,8 @@
       <div id="logo">STRATA</div>
       <div id="header-info">
         <span id="turn-display">ターン 1</span>
+        <button id="btn-player1">あなた</button>
+        <button id="btn-player2">相手</button>
         <button id="btn-log-popup" class="mobile-only">ログ</button>
         <button id="btn-piece-info" class="mobile-only">駒情報</button>
       </div>
@@ -22,23 +24,11 @@
 
       <!-- ===== COL 1: 詳細バー ===== -->
       <aside id="info-panel">
-        <div id="info-tabs" class="mobile-only">
-          <button class="info-tab active" data-tab="you">あなた</button>
-          <button class="info-tab" data-tab="cpu">相手</button>
-        </div>
         <div id="tab-you-panel" class="tab-panel">
           <div id="pc-log-area" class="pc-only">
             <div class="section-title">ログ</div>
             <div id="log-list"></div>
           </div>
-          <div class="mobile-only">
-            <div class="piece-list" id="mob-p1-pieces"></div>
-            <div class="hand-area" id="mob-p1-hand"></div>
-          </div>
-        </div>
-        <div id="tab-cpu-panel" class="tab-panel" style="display:none">
-          <div class="piece-list" id="mob-p2-pieces"></div>
-          <div class="hand-area" id="mob-p2-hand"></div>
         </div>
         <div id="tab-selected-panel" class="tab-panel" style="display:none">
           <div id="info-empty">駒をクリックすると<br>詳細が表示されます</div>
@@ -152,20 +142,8 @@
 
       </div>
 
-      <!-- ===== COL 3: 駒情報 ===== -->
+      <!-- ===== COL 3: （空・モバイル用アクション） ===== -->
       <aside id="side-panel">
-        <section class="player-section pc-only" id="p2-section">
-          <div class="player-label cpu-label">CPU</div>
-          <div class="hand-area" id="p2-hand"></div>
-          <div class="piece-list" id="p2-pieces"></div>
-        </section>
-
-        <section class="player-section pc-only" id="p1-section">
-          <div class="player-label you-label">あなた</div>
-          <div class="piece-list" id="p1-pieces"></div>
-          <div class="hand-area" id="p1-hand"></div>
-        </section>
-
         <!-- Mobile: action buttons (shown when piece selected) -->
         <section id="mob-action-section">
           <div id="mob-action-btns">
@@ -191,6 +169,27 @@
         <div id="gameover-title">GAME OVER</div>
         <div id="gameover-msg"></div>
         <button id="btn-restart">もう一度プレイ</button>
+      </div>
+    </div>
+
+    <!-- ===== LEFT PEEK（あなた / 相手 駒情報）===== -->
+    <div id="left-peek">
+      <div id="left-peek-overlay"></div>
+      <div id="left-peek-panel">
+        <div class="side-peek-header">
+          <span id="left-peek-title">あなた</span>
+          <button id="btn-close-left-peek" class="mob-popup-close">✕</button>
+        </div>
+        <div id="lp-p1-section" class="sp-section" style="display:none">
+          <div class="player-label you-label">あなた</div>
+          <div class="piece-list" id="p1-pieces"></div>
+          <div class="hand-area" id="p1-hand"></div>
+        </div>
+        <div id="lp-p2-section" class="sp-section" style="display:none">
+          <div class="player-label cpu-label">CPU（相手）</div>
+          <div class="piece-list" id="p2-pieces"></div>
+          <div class="hand-area" id="p2-hand"></div>
+        </div>
       </div>
     </div>
 

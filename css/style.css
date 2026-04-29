@@ -58,6 +58,19 @@ html, body {
   font-size: 11px;
 }
 
+#btn-player1, #btn-player2 {
+  padding: 3px 8px;
+  font-size: 11px;
+  background: var(--btn);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-family: var(--font);
+  touch-action: manipulation;
+  flex-shrink: 0;
+}
+
 #game-layout {
   display: flex;
   flex: 1;
@@ -90,26 +103,6 @@ html, body {
   overflow: hidden;
 }
 
-#info-tabs {
-  display: none;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border);
-}
-.info-tab {
-  flex: 1;
-  padding: 7px 4px;
-  background: var(--btn);
-  border: none;
-  border-right: 1px solid var(--border);
-  color: var(--text-dim);
-  font-family: var(--font);
-  font-size: 13px;
-  cursor: pointer;
-  transition: all .15s;
-}
-.info-tab:last-child { border-right: none; }
-.info-tab.active { background: var(--btn-act); color: #fff; }
-.info-tab:hover:not(.active) { background: var(--btn-hover); color: var(--text); }
 
 .tab-panel {
   flex: 1;
@@ -416,15 +409,8 @@ html, body {
 
 /* ===== COL 3: 駒情報 ===== */
 #side-panel {
-  width: 240px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px;
-  background: var(--panel);
-  border-left: 1px solid var(--border);
-  overflow-y: auto;
+  width: 0;
+  display: none;
 }
 
 .section-title {
@@ -690,6 +676,38 @@ html, body {
 }
 #sp-hp { font-size: 13px; color: var(--text); margin-bottom: 2px; }
 
+/* ===== LEFT PEEK（あなた / 相手） ===== */
+#left-peek {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+#left-peek.open { display: block; }
+#left-peek-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0);
+  transition: background 0.25s ease;
+}
+#left-peek.open #left-peek-overlay { background: rgba(0,0,0,0.55); }
+#left-peek-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: min(84%, 380px);
+  height: 100%;
+  background: var(--panel);
+  border-right: 2px solid var(--accent);
+  box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.25s ease;
+  overflow: hidden;
+}
+#left-peek.open #left-peek-panel { transform: translateX(0); }
+
 /* ===== LOG POPUP (mobile) ===== */
 #log-popup {
   position: fixed; inset: 0; background: rgba(0,0,0,.7);
@@ -755,6 +773,7 @@ html, body {
     border-top: none;
   }
   #side-panel {
+    display: flex;
     grid-area: side;
     width: auto;
     height: 72px;
@@ -766,7 +785,6 @@ html, body {
     gap: 3px;
     flex-direction: column;
   }
-  #info-tabs { display: flex; }
   .tab-panel { padding: 4px; }
 
   /* ── 盤エリア（最大確保・下寄せ） ── */
