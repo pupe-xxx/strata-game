@@ -307,14 +307,34 @@ const Renderer = (() => {
       ctx.fill();
     }
 
-    // Damage flash
+    // Damage flash（拡張リング）
     if (flashSet && flashSet.has(piece.id)) {
-      ctx.globalAlpha = 0.5;
+      const expiry   = typeof flashSet.get === 'function' ? (flashSet.get(piece.id) ?? Date.now() + 900) : Date.now() + 900;
+      const elapsed  = Math.max(0, 900 - (expiry - Date.now()));
+      const progress = Math.min(1, elapsed / 900);
+      // 拡張リング
       ctx.beginPath();
-      ctx.arc(cx, cy, pr * 1.2, 0, Math.PI * 2);
-      ctx.fillStyle = '#ff1744';
-      ctx.fill();
-      ctx.globalAlpha = 1.0;
+      ctx.arc(cx, cy, pr * (1.0 + progress * 1.3), 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,50,50,${(1 - progress) * 0.9})`;
+      ctx.lineWidth   = 3 * scale;
+      ctx.stroke();
+      // 内側リング（前半のみ）
+      if (progress < 0.6) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, pr * (1.0 + progress * 0.5), 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,180,0,${(1 - progress / 0.6) * 0.6})`;
+        ctx.lineWidth   = 1.5 * scale;
+        ctx.stroke();
+      }
+      // 赤オーバーレイ（前半のみ）
+      if (progress < 0.35) {
+        ctx.globalAlpha = (0.35 - progress) / 0.35 * 0.55;
+        ctx.beginPath();
+        ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff1744';
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+      }
     }
 
     // Selection glow
@@ -618,6 +638,37 @@ const Renderer = (() => {
   let _reserveCells = [];
   function setReserveCells(cells) { _reserveCells = cells ?? []; }
 
+  let _deathEffects = [];
+  function setDeathEffects(effects) { _deathEffects = effects; }
+
+  function drawDeathEffects() {
+    const now = Date.now();
+    for (const eff of _deathEffects) {
+      if (eff.expiry < now) continue;
+      const dur      = eff.expiry - eff.startTime;
+      const progress = Math.min(1, (now - eff.startTime) / dur);
+      const fade     = 1 - progress;
+      // 外側リング
+      ctx.beginPath();
+      ctx.arc(eff.x, eff.y, HEX * (0.3 + progress * 1.4), 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,80,0,${fade * 0.9})`;
+      ctx.lineWidth   = 3 * scale;
+      ctx.stroke();
+      // 内側リング
+      ctx.beginPath();
+      ctx.arc(eff.x, eff.y, HEX * (0.2 + progress * 0.8), 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,220,0,${fade * 0.7})`;
+      ctx.lineWidth   = 2 * scale;
+      ctx.stroke();
+      // ✕クロス
+      const sz = HEX * 0.28 * (1 - progress * 0.4);
+      ctx.strokeStyle = `rgba(255,100,0,${fade * 0.9})`;
+      ctx.lineWidth   = 2.5 * scale;
+      ctx.beginPath(); ctx.moveTo(eff.x - sz, eff.y - sz); ctx.lineTo(eff.x + sz, eff.y + sz); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(eff.x + sz, eff.y - sz); ctx.lineTo(eff.x - sz, eff.y + sz); ctx.stroke();
+    }
+  }
+
   function draw(state, posOverrides, flashSet) {
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -694,10 +745,13 @@ const Renderer = (() => {
         && state.selected.r === row && state.selected.c === col;
       drawPiece(row, col, piece, isSel, posOverrides, flashSet);
     }
+
+    // 5. 死亡エフェクト
+    drawDeathEffects();
   }
 
   return {
     init, resize, setViewDir, getViewDir,
-    cellToScreen, screenToCell, hitTestPiece, draw, setPaintMarkers, setReserveCells,
+    cellToScreen, screenToCell, hitTestPiece, draw, setPaintMarkers, setReserveCells, setDeathEffects,
   };
 })();

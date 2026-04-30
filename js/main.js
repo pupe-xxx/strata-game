@@ -63,6 +63,8 @@ function applyCanvasZoom() {
 
 // Damage flash: pieceId → expiry timestamp (display-only, not in state)
 const damageFlash = new Map();
+// Death effects: [{x, y, startTime, expiry}]
+const deathEffects = [];
 
 // ── Animation ─────────────────────────────────────────────────────
 const ANIM_DURATION = 500;  // ms
@@ -131,16 +133,44 @@ function animateGroup(group, onDone) {
   requestAnimationFrame(frame);
 }
 
-/** グループ配列を順番に再生（各グループは同時） */
-function startAnimation(groups, onDone) {
-  // groups は Array<Array<entry>> または Array<entry>（後方互換）
+/** グループ配列を順番に再生。後発グループの駒はスナップショット位置に固定して表示 */
+function startAnimation(groups, snapshot, onDone) {
   const normalised = Array.isArray(groups[0]) ? groups : [groups];
   let i = 0;
+
   function next() {
     if (i >= normalised.length) { onDone(); return; }
-    const g = normalised[i++];
-    if (g.length === 0) { next(); return; }
-    animateGroup(g, () => setTimeout(next, 120));
+    const gi    = i++;
+    const group = normalised[gi];
+    if (group.length === 0) { next(); return; }
+
+    // 後発グループの駒をスナップショット位置に固定
+    const laterIds = new Set();
+    for (let j = gi + 1; j < normalised.length; j++) {
+      for (const e of normalised[j]) laterIds.add(e.pieceId);
+    }
+    const staticPos = new Map();
+    for (const [id, pos] of snapshot) {
+      if (laterIds.has(id)) staticPos.set(id, { x: pos.x, y: pos.y });
+    }
+
+    const start = performance.now();
+    function frame(ts) {
+      const raw = Math.min(1, (ts - start) / ANIM_DURATION);
+      const t   = easeInOut(raw);
+      const overrides = new Map(staticPos);
+      for (const entry of group) {
+        overrides.set(entry.pieceId, {
+          x: entry.fromX + (entry.toX - entry.fromX) * t,
+          y: entry.fromY + (entry.toY - entry.fromY) * t,
+        });
+      }
+      const af = damageFlash.size > 0 ? damageFlash : null;
+      Renderer.draw(G, overrides, af);
+      if (raw < 1) requestAnimationFrame(frame);
+      else setTimeout(next, 120);
+    }
+    requestAnimationFrame(frame);
   }
   next();
 }
@@ -215,7 +245,14 @@ function tick() {
   for (const [id, until] of damageFlash) {
     if (now > until) damageFlash.delete(id);
   }
-  const activeFlash = damageFlash.size > 0 ? new Set(damageFlash.keys()) : null;
+  // Cleanup expired death effects
+  if (deathEffects.length > 0) {
+    for (let k = deathEffects.length - 1; k >= 0; k--) {
+      if (deathEffects[k].expiry < now) deathEffects.splice(k, 1);
+    }
+    Renderer.setDeathEffects(deathEffects);
+  }
+  const activeFlash = damageFlash.size > 0 ? damageFlash : null;
   Renderer.draw(G, null, activeFlash);
   updateUI();
   if (G.phase !== 'GAME_OVER') {
@@ -591,7 +628,7 @@ function onCanvasTouchEnd(e) {
   if (_canvasDtTimer) {
     clearTimeout(_canvasDtTimer);
     _canvasDtTimer = null;
-    setLayer(G.currentLayer === 'surface' ? 'depth' : 'surface');
+    setLayer(G.viewLayer === 'surface' ? 'depth' : 'surface');
   } else {
     _canvasDtTimer = setTimeout(() => { _canvasDtTimer = null; }, 280);
   }
@@ -1303,6 +1340,20 @@ function confirmTurn() {
 
     const log = resolveActions(G, allActions);
 
+    // 死亡した駒のスナップショット位置を記録（アニメーション終了後にエフェクト表示）
+    const deathPositions = [];
+    for (const [id, snapPos] of snapshot) {
+      let found = false;
+      outer: for (const l of ['surface','depth']) {
+        for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
+          for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
+            if (G[l][r][c].piece?.id === id) { found = true; break outer; }
+          }
+        }
+      }
+      if (!found) deathPositions.push({ x: snapPos.x, y: snapPos.y });
+    }
+
     // ── アニメーションをペア別に分割 ─────────────────────────────
     const fullQueue = buildAnimQueue(snapshot, G);
     const pairGroups = pairs.map(pair => {
@@ -1322,9 +1373,15 @@ function confirmTurn() {
     updateUI();
 
     const finish = () => {
-      const flashUntil = Date.now() + 900;
+      const now        = Date.now();
+      const flashUntil = now + 900;
       for (const pid of G.damagedThisTurn ?? []) damageFlash.set(pid, flashUntil);
       G.damagedThisTurn = [];
+      // 死亡エフェクト追加
+      for (const pos of deathPositions) {
+        deathEffects.push({ x: pos.x, y: pos.y, startTime: now, expiry: now + 1200 });
+      }
+      if (deathPositions.length > 0) Renderer.setDeathEffects(deathEffects);
 
       log.forEach(msg => {
         const isP1  = msg.includes('あなた');
@@ -1348,7 +1405,7 @@ function confirmTurn() {
     };
 
     if (fullQueue.length > 0) {
-      startAnimation(pairGroups, finish);
+      startAnimation(pairGroups, snapshot, finish);
     } else {
       Renderer.draw(G);
       finish();
