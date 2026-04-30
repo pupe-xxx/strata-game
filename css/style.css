@@ -759,17 +759,11 @@ html, body {
 
   /* ── 上部情報ストリップ ── */
   #info-panel {
-    grid-area: info;
-    width: auto;
-    height: 72px;
-    overflow: hidden;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    border-top: none;
+    display: none;
   }
   #side-panel {
     display: flex;
-    grid-area: side;
+    grid-column: 1 / -1;
     width: auto;
     height: 72px;
     overflow-y: auto;
