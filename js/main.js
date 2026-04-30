@@ -1267,6 +1267,12 @@ function fillSlot(idx, action, piece) {
 }
 
 function clearSlot(idx) {
+  // RESERVE_SET キャンセル時は駒の reservedMove も消す
+  const removed = G.playerActions[idx];
+  if (removed?.type === 'RESERVE_SET') {
+    const loc = findPieceById(G, removed.pieceId);
+    if (loc) loc.piece.reservedMove = null;
+  }
   const remaining = G.playerActions.filter((_, i) => i !== idx);
   clearSlots();
   remaining.forEach((a, i) => {
@@ -1286,13 +1292,20 @@ function clearSlot(idx) {
 }
 
 function clearSlots() {
+  // RESERVE_SET アクションがあれば駒の reservedMove もクリア
+  for (const a of G.playerActions) {
+    if (a.type === 'RESERVE_SET') {
+      const loc = findPieceById(G, a.pieceId);
+      if (loc) loc.piece.reservedMove = null;
+    }
+  }
   G.playerActions = [];
   for (let i = 0; i < 2; i++) {
     const slotEl = document.getElementById(`slot-${i}`);
     slotEl.querySelector('.slot-text').textContent = '未設定';
     slotEl.classList.remove('filled');
     slotEl.querySelector('.slot-clear').style.display = 'none';
-    }
+  }
   document.getElementById('btn-confirm').disabled = true;
 }
 

@@ -544,6 +544,36 @@ const Renderer = (() => {
         ctx.setLineDash([3 * scale, 3 * scale]);
         ctx.stroke();
         ctx.setLineDash([]);
+
+      } else if (action.type === 'REACT') {
+        // ⚡ 反応監視: 紫リング + ⚡マーク
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, HEX * 0.50, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(171,71,188,0.85)';
+        ctx.lineWidth   = 2.5 * scale;
+        ctx.setLineDash([4 * scale, 2 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = `bold ${Math.max(9, Math.round(HEX * 0.55))}px serif`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(171,71,188,0.9)';
+        ctx.fillText('⚡', pos.x, pos.y);
+
+      } else if (action.type === 'SKILL_VINE') {
+        // 🌿 蔦設置: 緑リング + 🌿マーク
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, HEX * 0.50, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(102,187,106,0.85)';
+        ctx.lineWidth   = 2.5 * scale;
+        ctx.setLineDash([4 * scale, 2 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = `bold ${Math.max(9, Math.round(HEX * 0.55))}px serif`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(102,187,106,0.9)';
+        ctx.fillText('🌿', pos.x, pos.y);
       }
     }
   }
