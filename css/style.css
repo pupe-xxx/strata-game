@@ -882,6 +882,66 @@ html, body {
     pointer-events: auto;
   }
 
+  /* ── 占領UI：左=スコア / 右=エコー詳細 ── */
+  #side-panel #occ-section {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    padding: 3px 4px;
+    gap: 5px;
+    height: 100%;
+    box-sizing: border-box;
+    border: none;
+    border-radius: 0;
+  }
+  /* 左列：スコア */
+  #side-panel #occ-score-row {
+    flex: 0 0 auto;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 0;
+  }
+  #side-panel #occ-score-display {
+    font-size: 11px;
+    font-weight: bold;
+    white-space: pre;
+    text-align: left;
+    padding: 0;
+    line-height: 1.7;
+  }
+  #side-panel .occ-toggle-btn { display: none !important; }
+  /* 右列：エコー詳細（常時表示） */
+  #side-panel #occ-detail {
+    flex: 1;
+    display: flex !important;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0;
+    border-left: 1px solid var(--border);
+    padding-left: 5px;
+    overflow: hidden;
+    min-width: 0;
+  }
+  /* 「占領状況 / 先取5点」ヘッダー行を非表示 */
+  #side-panel #occ-detail > div:first-child { display: none !important; }
+  /* エコーポイント列 + タイマー列を横並び */
+  #side-panel #occ-detail > div:nth-child(2) {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 6px !important;
+    margin-top: 0 !important;
+    align-items: flex-start;
+  }
+  #side-panel #occ-detail > div:nth-child(2) > div { flex: 1; min-width: 0; }
+  /* 「エコーポイント」「タイマー」ラベル非表示 */
+  #side-panel #occ-detail > div:nth-child(2) > div > div:first-child { display: none !important; }
+  #side-panel #occ-detail .occ-row { margin-bottom: 1px; gap: 2px; }
+  #side-panel #occ-detail .occ-key { font-size: 10px; width: auto; }
+  #side-panel #occ-detail .occ-count { font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #side-panel #occ-detail .victory-hint { font-size: 10px; margin-top: 1px; line-height: 1.4; }
+  #side-panel #victory-warn { display: none !important; }
+
   #gameover-box   { padding: 24px 20px; }
   #gameover-title { font-size: 24px; }
 }

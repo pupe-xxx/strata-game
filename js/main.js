@@ -187,7 +187,7 @@ function initGame() {
     if (occSection && sidePanel) sidePanel.insertBefore(occSection, sidePanel.firstChild);
     // 占領詳細を初期折りたたみ状態に
     const occDetail = document.getElementById('occ-detail');
-    if (occDetail) occDetail.classList.add('collapsed');
+    if (occDetail && !isMobile()) occDetail.classList.add('collapsed');
   }
   Renderer.init(document.getElementById('game-canvas'));
   Renderer.resize();
@@ -1373,7 +1373,9 @@ function updateUI() {
   const s1 = G.occScore?.p1 ?? 0;
   const s2 = G.occScore?.p2 ?? 0;
   const scoreEl = document.getElementById('occ-score-display');
-  if (scoreEl) scoreEl.textContent = `あなた ${s1}pt  /  CPU ${s2}pt`;
+  if (scoreEl) scoreEl.textContent = isMobile()
+    ? `あなた ${s1}pt\nCPU   ${s2}pt`
+    : `あなた ${s1}pt  /  CPU ${s2}pt`;
 
   // ── エコーポイント状態 ──────────────────────────────────────────
   const ep = G.echoPoint;
