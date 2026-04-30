@@ -1042,6 +1042,250 @@ function resolveActions(state, allActions) {
   return log;
 }
 
+// ── Phase-based resolution API (ペア別処理) ───────────────────────
+
+function resolvePreamble(state, allActions, log) {
+  for (const layer of ['surface','depth']) {
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
+        const p = state[layer][r][c].piece;
+        if (p) { p.vineSlowed = false; p.surrounded = false; }
+      }
+    }
+  }
+  updateChargingSkills(state, log);
+  if (state.tires.length > 0) processTires(state, log);
+  for (const a of allActions.filter(a => a.type === 'RESERVED_MOVE')) {
+    const srcLoc = findPieceById(state, a.pieceId);
+    if (!srcLoc) continue;
+    const who = srcLoc.piece.owner === 'p1' ? 'あなた' : 'CPU';
+    const lbl = CONFIG.PIECE_LABEL[srcLoc.piece.type];
+    if (a.viaR != null) {
+      const viaCell = state[a.viaLayer]?.[a.viaR]?.[a.viaC];
+      if (viaCell && !viaCell.piece) {
+        movePieceOnGrid(state, srcLoc.layer, srcLoc.r, srcLoc.c, a.viaLayer, a.viaR, a.viaC);
+        applyLandingEffect(state[a.viaLayer][a.viaR][a.viaC].piece, state[a.viaLayer][a.viaR][a.viaC].terrain);
+      }
+    }
+    const newLoc = findPieceById(state, a.pieceId);
+    if (!newLoc) continue;
+    const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (dstCell && !dstCell.piece) {
+      movePieceOnGrid(state, newLoc.layer, newLoc.r, newLoc.c, a.toLayer, a.toR, a.toC);
+      applyLandingEffect(state[a.toLayer][a.toR][a.toC].piece, state[a.toLayer][a.toR][a.toC].terrain);
+    }
+    const finalLoc = findPieceById(state, a.pieceId);
+    if (finalLoc) finalLoc.piece.reservedMove = null;
+    log.push(`予約移動: ${who} ${lbl} → (${a.toR},${a.toC})`);
+  }
+}
+
+function resolvePairActions(state, pairActions, log) {
+  // Vine
+  for (const a of pairActions.filter(a => a.type === 'SKILL_VINE')) {
+    const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!tCell || tCell.piece) continue;
+    const t = tCell.terrain;
+    if (t.type !== 'flat' && t.type !== 'vine') continue;
+    if (t.type === 'vine') removeVineAt(state, a.toLayer, a.toR, a.toC);
+    const ownerVines = a.owner === 'p1' ? state.p1Vines : state.p2Vines;
+    if (ownerVines.length >= CONFIG.VINE_MAX) {
+      const oldest = ownerVines.shift();
+      const oldCell = state[oldest.layer]?.[oldest.r]?.[oldest.c];
+      if (oldCell && oldCell.terrain.type === 'vine') oldCell.terrain = { type: 'flat', stage: 0 };
+    }
+    ownerVines.push({ r: a.toR, c: a.toC, layer: a.toLayer });
+    tCell.terrain = { type: 'vine', stage: 1, placedBy: a.owner };
+    const who = a.owner === 'p1' ? 'あなた' : 'CPU';
+    if (a.owner === 'p1') log.push(`🌿蔦設置: ${who} (${a.toR},${a.toC})`);
+    else                  log.push(`🌿蔦設置: ${who}`);
+  }
+  // Terrain
+  const terrainMap = {};
+  for (const a of pairActions.filter(a => a.type === 'TERRAIN')) {
+    const key = `${a.toLayer}_${a.toR}_${a.toC}`;
+    if (terrainMap[key]) {
+      if (terrainMap[key].terrainDir !== a.terrainDir) { terrainMap[key] = 'CANCEL'; log.push('地形変形: 競合キャンセル'); }
+    } else { terrainMap[key] = a; }
+  }
+  for (const [, a] of Object.entries(terrainMap)) {
+    if (a === 'CANCEL') continue;
+    const msg = applyTerrainChange(state, a.toLayer, a.toR, a.toC, a.terrainDir, a.owner);
+    if (msg) {
+      const who = a.owner === 'p1' ? 'あなた' : 'CPU';
+      if (a.owner === 'p1') log.push(`地形変形: ${who} ${msg}`);
+      else                  log.push(`地形変形: ${who}`);
+    }
+  }
+  // Move
+  const moveMap = {};
+  for (const a of pairActions.filter(a => a.type === 'MOVE')) {
+    const key = `${a.toLayer}_${a.toR}_${a.toC}`;
+    if (moveMap[key]) { moveMap[key] = 'BOUNCE'; log.push(`移動衝突: バウンス (${a.toR},${a.toC})`); }
+    else              { moveMap[key] = a; }
+  }
+  for (const [, a] of Object.entries(moveMap)) {
+    if (a === 'BOUNCE') continue;
+    const srcCell = state[a.fromLayer]?.[a.fromR]?.[a.fromC];
+    if (!srcCell?.piece || srcCell.piece.id !== a.pieceId) continue;
+    const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!dstCell || dstCell.piece) continue;
+    movePieceOnGrid(state, a.fromLayer, a.fromR, a.fromC, a.toLayer, a.toR, a.toC);
+    const piece = state[a.toLayer][a.toR][a.toC].piece;
+    applyLandingEffect(piece, state[a.toLayer][a.toR][a.toC].terrain);
+    log.push(`${a.owner === 'p1' ? 'あなた' : 'CPU'} ${CONFIG.PIECE_LABEL[piece.type]} → (${a.toR},${a.toC})`);
+  }
+  // Transit
+  for (const a of pairActions.filter(a => a.type === 'TRANSIT')) {
+    const srcCell = state[a.fromLayer]?.[a.fromR]?.[a.fromC];
+    if (!srcCell?.piece || srcCell.piece.id !== a.pieceId) continue;
+    const destCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!destCell || destCell.piece) continue;
+    movePieceOnGrid(state, a.fromLayer, a.fromR, a.fromC, a.toLayer, a.toR, a.toC);
+    const p = state[a.toLayer][a.toR][a.toC].piece;
+    log.push(`層移動: ${p.owner === 'p1' ? 'あなた' : 'CPU'} ${CONFIG.PIECE_LABEL[p.type]} → ${a.toLayer === 'surface' ? '表層' : '深層'} (${a.toR},${a.toC})`);
+  }
+  // Deploy
+  for (const a of pairActions.filter(a => a.type === 'DEPLOY')) {
+    const hand = a.owner === 'p1' ? state.p1Hand : state.p2Hand;
+    const idx = hand.findIndex(p => p.id === a.pieceId);
+    if (idx < 0) continue;
+    const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!dstCell || dstCell.piece) continue;
+    const piece = hand.splice(idx, 1)[0];
+    dstCell.piece = piece;
+    log.push(`${a.owner === 'p1' ? 'あなた' : 'CPU'} ${CONFIG.PIECE_LABEL[piece.type]} 配置 (${a.toR},${a.toC})`);
+  }
+  // Terrain effects at final positions
+  for (const layer of ['surface','depth']) {
+    for (let r = 0; r < BS; r++) {
+      for (let c = 0; c < BS; c++) {
+        const cell = state[layer][r][c];
+        if (cell.piece) applyLandingEffect(cell.piece, cell.terrain);
+      }
+    }
+  }
+  applyVineEffects(state);
+  // Attacks
+  const damaged = {};
+  for (const a of pairActions.filter(a => a.type === 'ATTACK')) {
+    const attLoc = findPieceById(state, a.pieceId);
+    if (!attLoc) continue;
+    const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!tCell?.piece || tCell.piece.owner === a.owner || tCell.piece.reviving) continue;
+    const dist = Math.max(Math.abs(attLoc.r - a.toR), Math.abs(attLoc.c - a.toC));
+    const def = CONFIG.PIECES[attLoc.piece.type];
+    const sameLayer = attLoc.layer === a.toLayer;
+    if (!sameLayer && attLoc.piece.type !== 'PHANTOM') continue;
+    if (sameLayer && dist > def.atkRange) continue;
+    if (!sameLayer && !(attLoc.r === a.toR && attLoc.c === a.toC)) continue;
+    damaged[tCell.piece.id] = (damaged[tCell.piece.id] ?? 0) + 1;
+  }
+  for (const a of pairActions.filter(a => a.type === 'REACT')) {
+    const attLoc = findPieceById(state, a.pieceId);
+    if (!attLoc) continue;
+    const wCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!wCell?.piece || wCell.piece.owner === a.owner || wCell.piece.reviving) continue;
+    const dist = hexDist(attLoc.r, attLoc.c, a.toR, a.toC);
+    const def = CONFIG.PIECES[attLoc.piece.type];
+    const atkBonus = isAdjacentToWall(state, attLoc.layer, attLoc.r, attLoc.c) ? 1 : 0;
+    const reactWho = a.owner === 'p1' ? 'あなた' : 'CPU';
+    if (dist <= def.atkRange + atkBonus) {
+      damaged[wCell.piece.id] = (damaged[wCell.piece.id] ?? 0) + 1;
+      if (a.owner === 'p1') log.push(`⚡反応発動: ${reactWho} ${CONFIG.PIECE_LABEL[attLoc.piece.type]} → (${a.toR},${a.toC})`);
+      else                  log.push(`⚡反応発動: ${reactWho}`);
+    } else { log.push(`⚡反応不発: ${reactWho}`); }
+  }
+  for (const a of pairActions.filter(a => a.type === 'SKILL_SNIPE')) {
+    const sniper = findPieceById(state, a.pieceId);
+    if (!sniper) continue;
+    const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!tCell?.piece || tCell.piece.owner === sniper.piece.owner || tCell.piece.reviving) continue;
+    const dr = Math.abs(sniper.r - a.toR), dc = Math.abs(sniper.c - a.toC);
+    if ((dr > 0 && dc > 0) || dr + dc > 5) continue;
+    damaged[tCell.piece.id] = (damaged[tCell.piece.id] ?? 0) + 1;
+    const who = sniper.piece.owner === 'p1' ? 'あなた' : 'CPU';
+    if (sniper.piece.owner === 'p1') log.push(`狙撃: ${who} レンジャー → (${a.toR},${a.toC})`);
+    else                             log.push(`狙撃: ${who} レンジャーが使用`);
+  }
+  state.damagedThisTurn = Object.keys(damaged);
+  for (const [pid, dmg] of Object.entries(damaged)) {
+    const loc = findPieceById(state, pid);
+    if (!loc) continue;
+    loc.piece.hp -= dmg;
+    const lbl = CONFIG.PIECE_LABEL[loc.piece.type];
+    const who = loc.piece.owner === 'p1' ? 'あなた' : 'CPU';
+    log.push(`ダメージ: ${who} ${lbl} -${dmg}HP (残${Math.max(0, loc.piece.hp)})`);
+    if (loc.piece.hp <= 0) {
+      if (loc.piece.reviving) { state[loc.layer][loc.r][loc.c].piece = null; log.push(`完全消滅: ${who} ${lbl}`); }
+      else { transferToRevival(state, loc.layer, loc.r, loc.c); log.push(`転送: ${who} ${lbl} → 反対層へ`); }
+    }
+  }
+  // Non-damage skills
+  for (const a of pairActions.filter(a => a.type === 'SKILL_PUSH')) {
+    const wLoc = findPieceById(state, a.pieceId);
+    if (!wLoc) continue;
+    const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!tCell?.piece) continue;
+    const dr = Math.sign(a.toR - wLoc.r), dc = Math.sign(a.toC - wLoc.c);
+    const pr = a.toR + dr, pc = a.toC + dc;
+    const who = wLoc.piece.owner === 'p1' ? 'あなた' : 'CPU';
+    if (!inBounds(pr, pc)) { log.push(`押し出し: ${who} ウォーデン (盤外)`); continue; }
+    const dCell = state[a.toLayer][pr][pc];
+    if (dCell.piece || !isLandable(dCell.terrain, CONFIG.PIECES[tCell.piece.type].height)) { log.push(`押し出し: ${who} ウォーデン (阻止)`); continue; }
+    const pushedPiece = tCell.piece;
+    movePieceOnGrid(state, a.toLayer, a.toR, a.toC, a.toLayer, pr, pc);
+    applyLandingEffect(pushedPiece, state[a.toLayer][pr][pc].terrain);
+    if (wLoc.piece.owner === 'p1') log.push(`押し出し: ${who} ウォーデン → (${pr},${pc})`);
+    else                          log.push(`押し出し: ${who} ウォーデンを使用`);
+  }
+  for (const a of pairActions.filter(a => a.type === 'SKILL_REPAIR')) {
+    const engLoc = findPieceById(state, a.pieceId);
+    if (!engLoc) continue;
+    const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!tCell?.piece || tCell.piece.owner !== engLoc.piece.owner || tCell.piece.reviving) continue;
+    tCell.piece.hp = Math.min(tCell.piece.hp + 1, tCell.piece.maxHp);
+    log.push(`修繕: ${engLoc.piece.owner === 'p1' ? 'あなた' : 'CPU'} エンジニア → ${CONFIG.PIECE_LABEL[tCell.piece.type]} +1HP`);
+  }
+  for (const a of pairActions.filter(a => a.type === 'SKILL_SWAP')) {
+    const sLoc = findPieceById(state, a.pieceId);
+    if (!sLoc) continue;
+    const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!tCell?.piece || tCell.piece.reviving) continue;
+    const sCell = state[sLoc.layer][sLoc.r][sLoc.c];
+    const tp = tCell.piece, sp = sCell.piece;
+    sCell.piece = tp; tCell.piece = sp;
+    applyLandingEffect(tp, sCell.terrain); applyLandingEffect(sp, tCell.terrain);
+    log.push(`位置交換: ${sp.owner === 'p1' ? 'あなた' : 'CPU'} ストライカー ⇄ ${CONFIG.PIECE_LABEL[tp.type]}`);
+  }
+  for (const a of pairActions.filter(a => a.type === 'SKILL_ROLLER_LIGHT' || a.type === 'SKILL_ROLLER_HEAVY')) {
+    const loc = findPieceById(state, a.pieceId);
+    if (!loc || loc.piece.chargingSkill) continue;
+    const dr = a.toR - a.fromR, dc = a.toC - a.fromC;
+    const cooldown = a.type === 'SKILL_ROLLER_LIGHT' ? CONFIG.LIGHT_COOLDOWN : CONFIG.HEAVY_COOLDOWN;
+    loc.piece.chargingSkill = { subtype: a.type === 'SKILL_ROLLER_LIGHT' ? 'light' : 'heavy', dir: [dr, dc], turnsLeft: cooldown };
+    const who = a.owner === 'p1' ? 'あなた' : 'CPU';
+    const tn = a.type === 'SKILL_ROLLER_LIGHT' ? '軽' : '重';
+    if (a.owner === 'p1') log.push(`🛞${tn}ローラーチャージ: ${who} (${cooldown}T後)`);
+    else                  log.push(`🛞${tn}ローラーチャージ: ${who}`);
+  }
+  for (const a of pairActions.filter(a => a.type === 'ESCAPE')) {
+    tryEscape(state, a.fromLayer, a.fromR, a.fromC);
+    log.push(`脱出: (${a.fromR},${a.fromC})`);
+  }
+}
+
+function resolvePostTurn(state, log) {
+  updateSurrounded(state);
+  updateOccupation(state);
+  const winner = checkVictory(state);
+  if (winner) {
+    state.winner = winner;
+    state.phase  = 'GAME_OVER';
+    log.push(`★ 勝利: ${winner === 'p1' ? 'あなた' : 'CPU'}`);
+  }
+}
+
 // ── Roller direction targets ──────────────────────────────────────
 
 /** Returns the 6 adjacent cells as valid direction targets for roller skill */

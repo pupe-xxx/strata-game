@@ -1322,10 +1322,7 @@ function confirmTurn() {
       }
     }
 
-    const snapshot   = snapshotPositions(G);
     const cpuActions = CpuAI.getCpuActions(G);
-
-    // ── アクションをペアに分割（1P①+2P①、1P②+2P②） ──────────
     const p1 = G.playerActions;
     const p2 = cpuActions.map(a => ({ ...a, owner: 'p2' }));
     const pairCount = Math.max(p1.length, p2.length);
@@ -1338,78 +1335,106 @@ function confirmTurn() {
     }
     const allActions = pairs.flat();
 
-    const log = resolveActions(G, allActions);
+    // ── フェーズ1: プリアンブル（タイヤ・予約移動）──────────────
+    const preambleLog = [];
+    resolvePreamble(G, allActions, preambleLog);
 
-    // 死亡した駒のスナップショット位置を記録（アニメーション終了後にエフェクト表示）
-    const deathPositions = [];
-    for (const [id, snapPos] of snapshot) {
-      let found = false;
-      outer: for (const l of ['surface','depth']) {
-        for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
-          for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
-            if (G[l][r][c].piece?.id === id) { found = true; break outer; }
+    // ── フェーズ2: ペア別解決 ─────────────────────────────────
+    const pairData = [];
+    for (const pair of pairs) {
+      const snapBefore = snapshotPositions(G);
+      const pairLog = [];
+      resolvePairActions(G, pair, pairLog);
+
+      // 死亡検出
+      const deathPos = [];
+      for (const [id, snapPos] of snapBefore) {
+        let found = false;
+        outer: for (const l of ['surface','depth']) {
+          for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
+            for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
+              if (G[l][r][c].piece?.id === id) { found = true; break outer; }
+            }
           }
         }
+        if (!found) deathPos.push({ x: snapPos.x, y: snapPos.y });
       }
-      if (!found) deathPositions.push({ x: snapPos.x, y: snapPos.y });
+
+      pairData.push({
+        queue:          buildAnimQueue(snapBefore, G),
+        log:            pairLog,
+        damaged:        [...(G.damagedThisTurn ?? [])],
+        deathPositions: deathPos,
+      });
+      G.damagedThisTurn = [];
     }
 
-    // ── アニメーションをペア別に分割 ─────────────────────────────
-    const fullQueue = buildAnimQueue(snapshot, G);
-    const pairGroups = pairs.map(pair => {
-      const ids = new Set(pair.map(a => a.pieceId));
-      return fullQueue.filter(e => ids.has(e.pieceId));
-    });
-    // スキル押し出し等で動いた駒（どのペアにも属さない）は最終グループへ
-    const assigned = new Set(pairGroups.flat().map(e => e.pieceId));
-    const leftover  = fullQueue.filter(e => !assigned.has(e.pieceId));
-    if (leftover.length > 0) {
-      if (pairGroups.length > 0) pairGroups[pairGroups.length - 1].push(...leftover);
-      else pairGroups.push(leftover);
-    }
+    // ── フェーズ3: ターン後処理（占領・勝利判定）────────────────
+    const postLog = [];
+    resolvePostTurn(G, postLog);
 
     clearSlots();
     G.turn++;
     updateUI();
 
-    const finish = () => {
-      const now        = Date.now();
-      const flashUntil = now + 900;
-      for (const pid of G.damagedThisTurn ?? []) damageFlash.set(pid, flashUntil);
-      G.damagedThisTurn = [];
-      // 死亡エフェクト追加
-      for (const pos of deathPositions) {
-        deathEffects.push({ x: pos.x, y: pos.y, startTime: now, expiry: now + 1200 });
-      }
-      if (deathPositions.length > 0) Renderer.setDeathEffects(deathEffects);
+    // ── アニメーション逐次再生 ────────────────────────────────
+    let pairIdx = 0;
 
-      log.forEach(msg => {
+    const finishAll = () => {
+      [...preambleLog, ...pairData.flatMap(d => d.log), ...postLog].forEach(msg => {
         const isP1  = msg.includes('あなた');
         const isP2  = msg.includes('CPU');
         const isSys = msg.startsWith('★') || msg.includes('ターン');
         addLog(msg, isSys ? 'system' : isP1 ? 'p1' : isP2 ? 'p2' : '');
       });
-
       tickReviveTimers(G);
-
-      if (G.phase === 'GAME_OVER') {
-        Renderer.draw(G);
-        showGameOver(G.winner);
-        return;
-      }
-
+      if (G.phase === 'GAME_OVER') { Renderer.draw(G); showGameOver(G.winner); return; }
       G.phase = 'PLAYER_INPUT';
       setMessage(`ターン ${G.turn} — 駒を選択してください`);
       document.getElementById('turn-display').textContent = `ターン ${G.turn}`;
       tick();
     };
 
-    if (fullQueue.length > 0) {
-      startAnimation(pairGroups, snapshot, finish);
-    } else {
-      Renderer.draw(G);
-      finish();
+    function animateNextPair() {
+      if (pairIdx >= pairData.length) { finishAll(); return; }
+      const data = pairData[pairIdx++];
+
+      const flashUntil = Date.now() + 900;
+      for (const pid of data.damaged) damageFlash.set(pid, flashUntil);
+
+      const onPairDone = () => {
+        const now = Date.now();
+        for (const pos of data.deathPositions) {
+          deathEffects.push({ x: pos.x, y: pos.y, startTime: now, expiry: now + 1200 });
+        }
+        if (data.deathPositions.length > 0) Renderer.setDeathEffects(deathEffects);
+        setTimeout(animateNextPair, data.damaged.length > 0 ? 500 : 200);
+      };
+
+      if (data.queue.length === 0) {
+        Renderer.draw(G, null, damageFlash.size > 0 ? damageFlash : null);
+        onPairDone();
+        return;
+      }
+
+      const start = performance.now();
+      (function frame(ts) {
+        const raw = Math.min(1, (ts - start) / ANIM_DURATION);
+        const t   = easeInOut(raw);
+        const overrides = new Map();
+        for (const entry of data.queue) {
+          overrides.set(entry.pieceId, {
+            x: entry.fromX + (entry.toX - entry.fromX) * t,
+            y: entry.fromY + (entry.toY - entry.fromY) * t,
+          });
+        }
+        Renderer.draw(G, overrides, damageFlash.size > 0 ? damageFlash : null);
+        if (raw < 1) requestAnimationFrame(frame);
+        else onPairDone();
+      })(performance.now());
     }
+
+    animateNextPair();
   }, 200);
 }
 

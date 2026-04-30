@@ -499,6 +499,55 @@ const Renderer = (() => {
     }
   }
 
+  function drawActionPreviews(state, layer) {
+    for (const action of (state.playerActions ?? [])) {
+      const tL = action.toLayer ?? layer;
+      if (tL !== layer) continue;
+      const pos = cellToScreen(action.toR, action.toC);
+
+      if (action.type === 'TERRAIN') {
+        const isUp  = action.terrainDir === 'up';
+        const color = isUp ? 'rgba(255,193,7,0.9)' : 'rgba(140,90,40,0.95)';
+        hexPath(pos.x, pos.y, HEX * 0.55);
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 2 * scale;
+        ctx.setLineDash([4 * scale, 3 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = `bold ${Math.max(9, Math.round(HEX * 0.62))}px serif`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = color;
+        ctx.fillText(isUp ? '凸' : '凹', pos.x, pos.y);
+
+      } else if (action.type === 'ATTACK' || action.type === 'SKILL_SNIPE') {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, HEX * 0.48, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(244,67,54,0.85)';
+        ctx.lineWidth   = 2.5 * scale;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, HEX * 0.18, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(244,67,54,0.7)';
+        ctx.lineWidth   = 1.5 * scale;
+        ctx.stroke();
+        const s = HEX * 0.52;
+        ctx.strokeStyle = 'rgba(244,67,54,0.55)';
+        ctx.lineWidth   = 1.5 * scale;
+        ctx.beginPath(); ctx.moveTo(pos.x - s, pos.y); ctx.lineTo(pos.x + s, pos.y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(pos.x, pos.y - s); ctx.lineTo(pos.x, pos.y + s); ctx.stroke();
+
+      } else if (['SKILL_PUSH','SKILL_REPAIR','SKILL_SWAP'].includes(action.type)) {
+        hexPath(pos.x, pos.y, HEX * 0.52);
+        ctx.strokeStyle = 'rgba(171,71,188,0.8)';
+        ctx.lineWidth   = 2 * scale;
+        ctx.setLineDash([3 * scale, 3 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
   function drawMovePath(src, dst, via) {
     ctx.beginPath();
     ctx.moveTo(src.x, src.y);
@@ -716,8 +765,9 @@ const Renderer = (() => {
       drawSelectedCell(state.selected.r, state.selected.c);
     }
 
-    // 3.5 Reserved paths + tires
+    // 3.5 Reserved paths + tires + action previews
     drawReservedPaths(state, layer);
+    drawActionPreviews(state, layer);
     drawTires(state, layer);
 
     // 4. Terrain + pieces (back to front: higher row = drawn later)
