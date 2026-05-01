@@ -756,6 +756,12 @@ function handleCanvasInteraction(px, py, isRightClick) {
       }
     }
 
+    // RESERVE_VIA 中（経由地選択）は駒の切り替え不可 — キャンセル扱い
+    if (G.actionMode === 'RESERVE_VIA') {
+      reserveDestination = null;
+      deselect();
+      return;
+    }
     // Click on own piece while targeting: switch selection
     if (clickedPiece && clickedPiece.owner === 'p1' && !clickedPiece.reviving) {
       const alreadyUsed = G.playerActions.some(a => a.pieceId === clickedPiece.id);
@@ -1342,13 +1348,8 @@ function clearSlot(idx) {
 }
 
 function clearSlots() {
-  // RESERVE_SET アクションがあれば駒の reservedMove もクリア
-  for (const a of G.playerActions) {
-    if (a.type === 'RESERVE_SET') {
-      const loc = findPieceById(G, a.pieceId);
-      if (loc) loc.piece.reservedMove = null;
-    }
-  }
+  // ※ piece.reservedMove は clearSlot（個別キャンセル）のみがクリアする。
+  //   confirmTurn 経由の clearSlots では消さない（次ターンに実行させるため）。
   G.playerActions = [];
   for (let i = 0; i < 2; i++) {
     const slotEl = document.getElementById(`slot-${i}`);
