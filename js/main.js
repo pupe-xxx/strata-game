@@ -973,6 +973,17 @@ function selectPiece(layer, r, c) {
     setMessage(`${lbl} 選択 — ${piece.reviving ? '復活待機中' : '包囲状態（移動不可）'}`);
   } else {
     G.validCells  = getValidMoves(G, layer, r, c);
+    // 既にキューされた自駒の移動先は除外
+    const takenByP1Move = new Set(
+      G.playerActions
+        .filter(a => a.type === 'MOVE' && a.owner === 'p1')
+        .map(a => `${a.toLayer},${a.toR},${a.toC}`)
+    );
+    if (takenByP1Move.size > 0) {
+      G.validCells = G.validCells.filter(
+        cell => !takenByP1Move.has(`${cell.layer},${cell.r},${cell.c}`)
+      );
+    }
     G.attackCells = getValidAttacks(G, layer, r, c);
     reserveCells  = (piece.reservedMove) ? [] : getValidReserveMoves(G, layer, r, c);
     Renderer.setReserveCells(reserveCells);
@@ -1347,12 +1358,15 @@ function confirmTurn() {
   setMessage('CPU思考中…');
 
   setTimeout(() => {
-    // Auto-add reserved moves for P1 pieces
+    // Auto-add reserved moves for P1 pieces（今ターンにRESERVE_SETしたばかりの駒は除外）
+    const newReserveIds = new Set(
+      G.playerActions.filter(a => a.type === 'RESERVE_SET').map(a => a.pieceId)
+    );
     for (const layer of ['surface','depth']) {
       for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
         for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
           const p = G[layer][r][c].piece;
-          if (p && p.owner === 'p1' && p.reservedMove) {
+          if (p && p.owner === 'p1' && p.reservedMove && !newReserveIds.has(p.id)) {
             const rv = p.reservedMove;
             G.playerActions.push({
               owner: 'p1', type: 'RESERVED_MOVE', pieceId: p.id,
