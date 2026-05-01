@@ -203,6 +203,7 @@ const Renderer = (() => {
     }
 
     const def     = CONFIG.PIECES[piece.type];
+    if (!def) return;  // unknown type (BLOCKERや不正データ) は描画しない
     const isP1    = piece.owner === 'p1';
     const pCol    = CONFIG.PIECE_COLOR[piece.type];
     const plrCol  = isP1 ? CONFIG.CLR.P1 : CONFIG.CLR.P2;

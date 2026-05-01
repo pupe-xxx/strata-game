@@ -163,6 +163,7 @@ function getValidMoves(state, layer, r, c) {
   if (piece.surrounded) return [];
 
   const def = CONFIG.PIECES[piece.type];
+  if (!def) return [];  // unknown type (BLOCKER等) は移動不可
 
   // Stage-2 wall: melee pieces are immobile (can't move off the wall)
   const myT = cell.terrain;
@@ -1069,13 +1070,16 @@ function resolvePreamble(state, allActions, log) {
       if (viaCell && !viaCell.piece) {
         movePieceOnGrid(state, srcLoc.layer, srcLoc.r, srcLoc.c, a.viaLayer, a.viaR, a.viaC);
         applyLandingEffect(state[a.viaLayer][a.viaR][a.viaC].piece, state[a.viaLayer][a.viaR][a.viaC].terrain);
+        // 移動成功時のみ reservedMove を更新して次ターンに目的地へ移動させる
+        const curLoc = findPieceById(state, a.pieceId);
+        if (curLoc) {
+          curLoc.piece.reservedMove = { toR: a.toR, toC: a.toC, toLayer: a.toLayer,
+                                        viaR: null, viaC: null, viaLayer: null };
+        }
+        log.push(`予約移動(1/2): ${who} ${lbl} → 経由(${a.viaR},${a.viaC})`);
+      } else {
+        log.push(`予約移動(1/2)失敗: ${who} ${lbl} 経由地ブロック(${a.viaR},${a.viaC})`);
       }
-      const curLoc = findPieceById(state, a.pieceId);
-      if (curLoc) {
-        curLoc.piece.reservedMove = { toR: a.toR, toC: a.toC, toLayer: a.toLayer,
-                                      viaR: null, viaC: null, viaLayer: null };
-      }
-      log.push(`予約移動(1/2): ${who} ${lbl} → 経由(${a.viaR},${a.viaC})`);
     } else {
       // 2/2ターン目: 目的地へ移動し reservedMove をクリア
       const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
