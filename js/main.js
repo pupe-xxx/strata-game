@@ -1040,9 +1040,9 @@ function selectPiece(layer, r, c) {
     reserveCells  = [];
     setMessage(`${lbl} 選択 — ${piece.reviving ? '復活待機中' : '包囲状態（移動不可）'}`);
   } else {
-    // 今ターンの自駒MOVEを仮適用して有効移動先を算出（被り防止）
+    // 今ターンの自駒MOVEを仮適用＋予約移動の経由地・目的地をブロックして有効移動先を算出
     G.validCells  = withSimulatedP1Actions(G, G.playerActions,
-      () => getValidMoves(G, layer, r, c), false);
+      () => getValidMoves(G, layer, r, c), true);
     G.attackCells = getValidAttacks(G, layer, r, c);
     // 予約移動先: MOVE + RESERVE_SET 両方を考慮
     reserveCells  = (piece.reservedMove) ? [] :
@@ -1183,7 +1183,7 @@ function setActionMode(mode) {
       setMessage('選択したマスを確認して脱出します');
     } else {
       G.validCells = withSimulatedP1Actions(G, G.playerActions,
-        () => getValidMoves(G, layer, r, c), false);
+        () => getValidMoves(G, layer, r, c), true);
       const zocNote = piece?.vineSlowed ? ' ⚠蔦減速' : piece?.surrounded ? ' ⚠包囲中' : '';
       setMessage(`移動先を選んでください (${G.validCells.length}箇所)${zocNote}`);
     }

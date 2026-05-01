@@ -1064,22 +1064,29 @@ function resolvePreamble(state, allActions, log) {
     const who = srcLoc.piece.owner === 'p1' ? 'あなた' : 'CPU';
     const lbl = CONFIG.PIECE_LABEL[srcLoc.piece.type];
     if (a.viaR != null) {
+      // 1/2ターン目: 経由地へ移動し、次ターン用に viaR を null にして reservedMove を更新
       const viaCell = state[a.viaLayer]?.[a.viaR]?.[a.viaC];
       if (viaCell && !viaCell.piece) {
         movePieceOnGrid(state, srcLoc.layer, srcLoc.r, srcLoc.c, a.viaLayer, a.viaR, a.viaC);
         applyLandingEffect(state[a.viaLayer][a.viaR][a.viaC].piece, state[a.viaLayer][a.viaR][a.viaC].terrain);
       }
+      const curLoc = findPieceById(state, a.pieceId);
+      if (curLoc) {
+        curLoc.piece.reservedMove = { toR: a.toR, toC: a.toC, toLayer: a.toLayer,
+                                      viaR: null, viaC: null, viaLayer: null };
+      }
+      log.push(`予約移動(1/2): ${who} ${lbl} → 経由(${a.viaR},${a.viaC})`);
+    } else {
+      // 2/2ターン目: 目的地へ移動し reservedMove をクリア
+      const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+      if (dstCell && !dstCell.piece) {
+        movePieceOnGrid(state, srcLoc.layer, srcLoc.r, srcLoc.c, a.toLayer, a.toR, a.toC);
+        applyLandingEffect(state[a.toLayer][a.toR][a.toC].piece, state[a.toLayer][a.toR][a.toC].terrain);
+      }
+      const finalLoc = findPieceById(state, a.pieceId);
+      if (finalLoc) finalLoc.piece.reservedMove = null;
+      log.push(`予約移動(2/2): ${who} ${lbl} → (${a.toR},${a.toC})`);
     }
-    const newLoc = findPieceById(state, a.pieceId);
-    if (!newLoc) continue;
-    const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
-    if (dstCell && !dstCell.piece) {
-      movePieceOnGrid(state, newLoc.layer, newLoc.r, newLoc.c, a.toLayer, a.toR, a.toC);
-      applyLandingEffect(state[a.toLayer][a.toR][a.toC].piece, state[a.toLayer][a.toR][a.toC].terrain);
-    }
-    const finalLoc = findPieceById(state, a.pieceId);
-    if (finalLoc) finalLoc.piece.reservedMove = null;
-    log.push(`予約移動: ${who} ${lbl} → (${a.toR},${a.toC})`);
   }
 }
 
