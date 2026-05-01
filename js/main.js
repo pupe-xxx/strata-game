@@ -185,6 +185,31 @@ function canUseRoller(pieceType) { return pieceType === 'ROLLER'; }
 
 function isMobile() { return window.innerWidth <= 700; }
 
+/**
+ * キュー済みのP1 MOVEアクションをゲーム状態に一時適用してfn()を実行し、状態を元に戻す。
+ * 2ターン予約移動の有効マス計算時に、1つ目のアクションの移動先を「塞がれた場所」として扱うために使用。
+ */
+function withSimulatedP1Moves(state, actions, fn) {
+  const applied = [];
+  for (const a of actions) {
+    if (a.type !== 'MOVE' || a.owner !== 'p1') continue;
+    const srcCell = state[a.fromLayer]?.[a.fromR]?.[a.fromC];
+    const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!srcCell?.piece || dstCell?.piece) continue;
+    const piece = srcCell.piece;
+    srcCell.piece = null;
+    dstCell.piece = piece;
+    applied.push({ fromLayer: a.fromLayer, fromR: a.fromR, fromC: a.fromC,
+                   toLayer: a.toLayer, toR: a.toR, toC: a.toC, piece });
+  }
+  const result = fn();
+  for (const mv of applied.reverse()) {
+    state[mv.fromLayer][mv.fromR][mv.fromC].piece = mv.piece;
+    state[mv.toLayer][mv.toR][mv.toC].piece = null;
+  }
+  return result;
+}
+
 
 // ── Panel switching (tabs removed) ───────────────────────────────
 
@@ -985,7 +1010,8 @@ function selectPiece(layer, r, c) {
       );
     }
     G.attackCells = getValidAttacks(G, layer, r, c);
-    reserveCells  = (piece.reservedMove) ? [] : getValidReserveMoves(G, layer, r, c);
+    reserveCells  = (piece.reservedMove) ? [] :
+      withSimulatedP1Moves(G, G.playerActions, () => getValidReserveMoves(G, layer, r, c));
     Renderer.setReserveCells(reserveCells);
     const zocNote = piece.vineSlowed ? ' ⚠蔦減速' : '';
     setMessage(`${lbl} 選択 — 緑:移動${G.validCells.length} 赤:攻撃${G.attackCells.length} 水:2T予約${reserveCells.length}${zocNote}`);
@@ -1156,35 +1182,18 @@ function setActionMode(mode) {
     setActBtn('btn-react', { active: true });
     return;
   } else if (mode === 'RESERVE') {
-    // Step 1: choose 2-turn destination
+    // Step 1: choose 2-turn destination（1アクション目の移動先を塞がれたマスとして計算）
     reserveDestination = null;
-    G.validCells = getValidReserveMoves(G, layer, r, c);
-    // 他の自駒の予約移動先・通常移動先を除外
-    const takenReserve = new Set(
-      G.playerActions
-        .filter(a => a.owner === 'p1')
-        .flatMap(a => {
-          if (a.type === 'MOVE') return [`${a.toLayer},${a.toR},${a.toC}`];
-          if (a.type === 'RESERVE_SET') {
-            const loc = findPieceById(G, a.pieceId);
-            const rm = loc?.piece?.reservedMove;
-            return rm ? [`${rm.toLayer},${rm.toR},${rm.toC}`] : [];
-          }
-          return [];
-        })
-    );
-    if (takenReserve.size > 0) {
-      G.validCells = G.validCells.filter(
-        cell => !takenReserve.has(`${cell.layer},${cell.r},${cell.c}`)
-      );
-    }
+    G.validCells = withSimulatedP1Moves(G, G.playerActions,
+      () => getValidReserveMoves(G, layer, r, c));
     setMessage(`🔵予約移動先を選んでください（2ターン先まで） (${G.validCells.length}箇所)`);
     document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
     return;
   } else if (mode === 'RESERVE_VIA') {
-    // Step 2: choose intermediate waypoint
+    // Step 2: choose intermediate waypoint（同様に1アクション目の移動先を考慮）
     if (!reserveDestination) return;
-    G.validCells = getValidReserveVia(G, layer, r, c, reserveDestination.r, reserveDestination.c);
+    G.validCells = withSimulatedP1Moves(G, G.playerActions,
+      () => getValidReserveVia(G, layer, r, c, reserveDestination.r, reserveDestination.c));
     setMessage(`🔵経由マスを選んでください → (${reserveDestination.r},${reserveDestination.c}) (${G.validCells.length}箇所)`);
     return;
   }
