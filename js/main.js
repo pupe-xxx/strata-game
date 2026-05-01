@@ -1110,6 +1110,17 @@ function setActionMode(mode) {
       setMessage('選択したマスを確認して脱出します');
     } else {
       G.validCells = getValidMoves(G, layer, r, c);
+      // 既にキュー済みの自駒移動先は除外（同マスへの2重移動を防ぐ）
+      const takenByP1 = new Set(
+        G.playerActions
+          .filter(a => a.type === 'MOVE' && a.owner === 'p1')
+          .map(a => `${a.toLayer},${a.toR},${a.toC}`)
+      );
+      if (takenByP1.size > 0) {
+        G.validCells = G.validCells.filter(
+          cell => !takenByP1.has(`${cell.layer},${cell.r},${cell.c}`)
+        );
+      }
       const zocNote = piece?.vineSlowed ? ' ⚠蔦減速' : piece?.surrounded ? ' ⚠包囲中' : '';
       setMessage(`移動先を選んでください (${G.validCells.length}箇所)${zocNote}`);
     }
@@ -1137,6 +1148,25 @@ function setActionMode(mode) {
     // Step 1: choose 2-turn destination
     reserveDestination = null;
     G.validCells = getValidReserveMoves(G, layer, r, c);
+    // 他の自駒の予約移動先・通常移動先を除外
+    const takenReserve = new Set(
+      G.playerActions
+        .filter(a => a.owner === 'p1')
+        .flatMap(a => {
+          if (a.type === 'MOVE') return [`${a.toLayer},${a.toR},${a.toC}`];
+          if (a.type === 'RESERVE_SET') {
+            const loc = findPieceById(G, a.pieceId);
+            const rm = loc?.piece?.reservedMove;
+            return rm ? [`${rm.toLayer},${rm.toR},${rm.toC}`] : [];
+          }
+          return [];
+        })
+    );
+    if (takenReserve.size > 0) {
+      G.validCells = G.validCells.filter(
+        cell => !takenReserve.has(`${cell.layer},${cell.r},${cell.c}`)
+      );
+    }
     setMessage(`🔵予約移動先を選んでください（2ターン先まで） (${G.validCells.length}箇所)`);
     document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
     return;

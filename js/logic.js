@@ -807,8 +807,11 @@ function resolveActions(state, allActions) {
   for (const a of allActions.filter(a => a.type === 'MOVE')) {
     const key = `${a.toLayer}_${a.toR}_${a.toC}`;
     if (moveMap[key]) {
-      moveMap[key] = 'BOUNCE';
-      log.push(`移動衝突: バウンス (${a.toR},${a.toC})`);
+      const existing = moveMap[key];
+      if (existing !== 'BOUNCE' && existing.owner !== a.owner) {
+        moveMap[key] = 'BOUNCE';
+        log.push(`移動衝突: バウンス (${a.toR},${a.toC})`);
+      }
     } else {
       moveMap[key] = a;
     }
@@ -1117,12 +1120,20 @@ function resolvePairActions(state, pairActions, log) {
       else                  log.push(`地形変形: ${who}`);
     }
   }
-  // Move
+  // Move（BOUNCE は p1 vs p2 の競合のみ。同オーナー2枚は先行入力除外で発生しないが安全のため先着優先）
   const moveMap = {};
   for (const a of pairActions.filter(a => a.type === 'MOVE')) {
     const key = `${a.toLayer}_${a.toR}_${a.toC}`;
-    if (moveMap[key]) { moveMap[key] = 'BOUNCE'; log.push(`移動衝突: バウンス (${a.toR},${a.toC})`); }
-    else              { moveMap[key] = a; }
+    if (moveMap[key]) {
+      const existing = moveMap[key];
+      if (existing !== 'BOUNCE' && existing.owner !== a.owner) {
+        moveMap[key] = 'BOUNCE';
+        log.push(`移動衝突: バウンス (${a.toR},${a.toC})`);
+      }
+      // 同オーナーが同マスへ（UI除外で通常起きないが）: 先着を維持
+    } else {
+      moveMap[key] = a;
+    }
   }
   for (const [, a] of Object.entries(moveMap)) {
     if (a === 'BOUNCE') continue;
