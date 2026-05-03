@@ -187,20 +187,13 @@ function isMobile() { return window.innerWidth <= 700; }
 
 /**
  * P1の計画アクションをゲーム状態に一時適用してfn()を実行し、状態を復元する。
- *
- * ・MOVE アクション       → 今ターン移動のシミュレーション（移動元を空に、移動先を占有）
- * ・RESERVE_SET アクション → 来ターン移動のシミュレーション（経由地・目的地をブロッカーで占有）
- *   ※ includeReserves=true の場合のみ RESERVE_SET を適用
+ * MOVE アクションのみシミュレーション（移動元を空に、移動先を占有）。
+ * RESERVE_SET の経由地・目的地はBLOCKERを使わず、呼び出し側でフィルタリングする。
  */
-function withSimulatedP1Actions(state, actions, fn, includeReserves = false) {
-  // 占有マーク用ダミー駒
-  const BLOCKER = { id: '__blk__', owner: '__blk__', type: 'BLOCKER',
-    hp: 1, maxHp: 1, reviving: false, trapped: false,
-    vineSlowed: false, surrounded: false, reservedMove: null, chargingSkill: null };
-
+function withSimulatedP1Actions(state, actions, fn) {
   const restores = []; // { layer, r, c, orig }
 
-  // Step1: MOVE を適用（今ターン移動）
+  // MOVE を仮適用（今ターン移動）
   for (const a of actions) {
     if (a.type !== 'MOVE' || a.owner !== 'p1') continue;
     const srcCell = state[a.fromLayer]?.[a.fromR]?.[a.fromC];
@@ -213,30 +206,6 @@ function withSimulatedP1Actions(state, actions, fn, includeReserves = false) {
     dstCell.piece = piece;
   }
 
-  // Step2: RESERVE_SET の経由地・目的地をブロック（来ターン移動）
-  if (includeReserves) {
-    for (const a of actions) {
-      if (a.type !== 'RESERVE_SET' || a.owner !== 'p1') continue;
-      const loc = findPieceById(state, a.pieceId);
-      const rm  = loc?.piece?.reservedMove;
-      if (!rm) continue;
-      // 経由地
-      if (rm.viaR != null) {
-        const viaCell = state[rm.viaLayer]?.[rm.viaR]?.[rm.viaC];
-        if (viaCell && !viaCell.piece) {
-          restores.push({ layer: rm.viaLayer, r: rm.viaR, c: rm.viaC, orig: null });
-          viaCell.piece = BLOCKER;
-        }
-      }
-      // 目的地
-      const dstCell = state[rm.toLayer]?.[rm.toR]?.[rm.toC];
-      if (dstCell && !dstCell.piece) {
-        restores.push({ layer: rm.toLayer, r: rm.toR, c: rm.toC, orig: null });
-        dstCell.piece = BLOCKER;
-      }
-    }
-  }
-
   const result = fn();
 
   // 逆順で状態を復元
@@ -245,6 +214,26 @@ function withSimulatedP1Actions(state, actions, fn, includeReserves = false) {
     state[layer][r][c].piece = orig;
   }
   return result;
+}
+
+/**
+ * RESERVE_SET アクションの経由地・目的地をセルリストから除外する。
+ * BLOCKERを使わない安全なフィルタリング。
+ */
+function filterReservedCells(state, actions, cells) {
+  for (const a of actions) {
+    if (a.type !== 'RESERVE_SET' || a.owner !== 'p1') continue;
+    const loc = findPieceById(state, a.pieceId);
+    const rm  = loc?.piece?.reservedMove;
+    if (!rm) continue;
+    cells = cells.filter(v => {
+      if (rm.viaR != null &&
+          v.r === rm.viaR && v.c === rm.viaC && v.layer === rm.viaLayer) return false;
+      if (v.r === rm.toR && v.c === rm.toC && v.layer === rm.toLayer) return false;
+      return true;
+    });
+  }
+  return cells;
 }
 
 
@@ -1040,14 +1029,16 @@ function selectPiece(layer, r, c) {
     reserveCells  = [];
     setMessage(`${lbl} 選択 — ${piece.reviving ? '復活待機中' : '包囲状態（移動不可）'}`);
   } else {
-    // 今ターンの自駒MOVEを仮適用＋予約移動の経由地・目的地をブロックして有効移動先を算出
-    G.validCells  = withSimulatedP1Actions(G, G.playerActions,
-      () => getValidMoves(G, layer, r, c), true);
+    // 今ターンの自駒MOVEを仮適用して有効移動先を算出し、予約済みセルを後フィルタリング
+    G.validCells  = filterReservedCells(G, G.playerActions,
+      withSimulatedP1Actions(G, G.playerActions,
+        () => getValidMoves(G, layer, r, c)));
     G.attackCells = getValidAttacks(G, layer, r, c);
     // 予約移動先: MOVE + RESERVE_SET 両方を考慮
     reserveCells  = (piece.reservedMove) ? [] :
-      withSimulatedP1Actions(G, G.playerActions,
-        () => getValidReserveMoves(G, layer, r, c), true);
+      filterReservedCells(G, G.playerActions,
+        withSimulatedP1Actions(G, G.playerActions,
+          () => getValidReserveMoves(G, layer, r, c)));
     Renderer.setReserveCells(reserveCells);
     const zocNote = piece.vineSlowed ? ' ⚠蔦減速' : '';
     setMessage(`${lbl} 選択 — 緑:移動${G.validCells.length} 赤:攻撃${G.attackCells.length} 水:2T予約${reserveCells.length}${zocNote}`);
@@ -1182,8 +1173,9 @@ function setActionMode(mode) {
       G.validCells = [{ r, c, layer }];
       setMessage('選択したマスを確認して脱出します');
     } else {
-      G.validCells = withSimulatedP1Actions(G, G.playerActions,
-        () => getValidMoves(G, layer, r, c), true);
+      G.validCells = filterReservedCells(G, G.playerActions,
+        withSimulatedP1Actions(G, G.playerActions,
+          () => getValidMoves(G, layer, r, c)));
       const zocNote = piece?.vineSlowed ? ' ⚠蔦減速' : piece?.surrounded ? ' ⚠包囲中' : '';
       setMessage(`移動先を選んでください (${G.validCells.length}箇所)${zocNote}`);
     }
@@ -1210,16 +1202,18 @@ function setActionMode(mode) {
   } else if (mode === 'RESERVE') {
     // Step 1: 2ターン先の目的地選択（MOVE+RESERVE_SET 両方でブロック）
     reserveDestination = null;
-    G.validCells = withSimulatedP1Actions(G, G.playerActions,
-      () => getValidReserveMoves(G, layer, r, c), true);
+    G.validCells = filterReservedCells(G, G.playerActions,
+      withSimulatedP1Actions(G, G.playerActions,
+        () => getValidReserveMoves(G, layer, r, c)));
     setMessage(`🔵予約移動先を選んでください（2ターン先まで） (${G.validCells.length}箇所)`);
     document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
     return;
   } else if (mode === 'RESERVE_VIA') {
     // Step 2: 経由地選択（同様に MOVE+RESERVE_SET 両方でブロック）
     if (!reserveDestination) return;
-    G.validCells = withSimulatedP1Actions(G, G.playerActions,
-      () => getValidReserveVia(G, layer, r, c, reserveDestination.r, reserveDestination.c), true);
+    G.validCells = filterReservedCells(G, G.playerActions,
+      withSimulatedP1Actions(G, G.playerActions,
+        () => getValidReserveVia(G, layer, r, c, reserveDestination.r, reserveDestination.c)));
     setMessage(`🔵経由マスを選んでください → (${reserveDestination.r},${reserveDestination.c}) (${G.validCells.length}箇所)`);
     return;
   }
