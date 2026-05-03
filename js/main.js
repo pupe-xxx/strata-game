@@ -1417,11 +1417,23 @@ function confirmTurn() {
     const allActions = pairs.flat();
 
     // ── フェーズ1: プリアンブル（タイヤ・予約移動）──────────────
+    // スナップショットをプリアンブル前に撮り、予約移動アニメーションを生成する
+    const snapBeforePreamble = snapshotPositions(G);
     const preambleLog = [];
     resolvePreamble(G, allActions, preambleLog);
+    const preambleQueue = buildAnimQueue(snapBeforePreamble, G);
 
     // ── フェーズ2: ペア別解決 ─────────────────────────────────
     const pairData = [];
+
+    // プリアンブルで駒が動いた場合は先頭に追加してアニメーションを見せる
+    pairData.push({
+      queue:          preambleQueue,
+      log:            preambleLog,
+      damaged:        [],
+      deathPositions: [],
+    });
+
     for (const pair of pairs) {
       const snapBefore = snapshotPositions(G);
       const pairLog = [];
@@ -1462,7 +1474,7 @@ function confirmTurn() {
     let pairIdx = 0;
 
     const finishAll = () => {
-      [...preambleLog, ...pairData.flatMap(d => d.log), ...postLog].forEach(msg => {
+      [...pairData.flatMap(d => d.log), ...postLog].forEach(msg => {
         const isP1  = msg.includes('あなた');
         const isP2  = msg.includes('CPU');
         const isSys = msg.startsWith('★') || msg.includes('ターン');
