@@ -28,8 +28,8 @@ function makePiece(type, owner) {
     justRevived: false,
     vineSlowed: false,     // slowed by enemy vine: -1 moveDist, skills blocked
     surrounded: false,     // surrounded by 3+ ZOC sources: cannot move
-    reservedMove: null,    // {toR,toC,toLayer,viaR,viaC,viaLayer} — auto-executes next turn
-    chargingSkill: null,   // {subtype:'light'|'heavy', dir:[dr,dc], turnsLeft:N}
+    reservedMove: null,    // {toR,toC,toLayer,viaR,viaC,viaLayer,setOnSlot} — 持続行動として次ターン以降に発動
+    chargingSkill: null,   // {subtype:'light'|'heavy', dir:[dr,dc], turnsLeft:N, setOnSlot}
   };
 }
 

@@ -30,23 +30,42 @@ const Renderer = (() => {
   // ── Resize ───────────────────────────────────────────────────────
   function resize() {
     const isMobile = window.innerWidth <= 700;
-    // PC: info(160) + occ(130) + action(185) + pieces(140) + borders(~6) = 621
-    const sideW    = isMobile ? 0 : 160 + 130 + 185 + 140 + 6;
-    const headerH  = isMobile ? 44 : 52;
-    // PC: board-wrapper has only canvas + message-bar(28) + gaps(16)
-    const reserveH = isMobile
-      ? Math.round(window.innerHeight * 0.36) + 44
-      : 52;
-    const availW = window.innerWidth  - sideW - (isMobile ? 8 : 16);
-    const availH = window.innerHeight - headerH - reserveH;
-    const scaleW = availW  / CONFIG.CANVAS_W;
-    const scaleH = availH  / CONFIG.CANVAS_H;
-    scale        = Math.max(0.28, Math.min(scaleW, scaleH, 2.5));  // 上限を2.5に拡大
-    canvas.width  = Math.round(CONFIG.CANVAS_W * scale);
-    canvas.height = Math.round(CONFIG.CANVAS_H * scale);
+    const boardWrapper = document.getElementById('board-wrapper');
+    let availW, availH;
+
+    if (boardWrapper) {
+      const rect = boardWrapper.getBoundingClientRect();
+      availW = rect.width;
+      availH = rect.height;
+      // Mobile: board-wrapper は盤専用（message-bar非表示）のためそのまま使用
+    }
+
+    // Fallback: 未レイアウト時
+    if (!availW || !availH) {
+      if (isMobile) {
+        availW = window.innerWidth - 8;
+        availH = window.innerHeight - 44 - Math.round(window.innerHeight * 0.36) - 44;
+      } else {
+        // info(288) + side(240) + borders(6) = 534
+        availW = window.innerWidth  - 534;
+        availH = window.innerHeight - 52;
+      }
+    }
+
+    // モバイルはPC向け横長キャンバスではなく盤に合わせたコンパクトサイズを使用
+    const canvasW = isMobile ? 600 : CONFIG.CANVAS_W;
+    const canvasH = isMobile ? 700 : CONFIG.CANVAS_H;
+    const originX = isMobile ? 300 : CONFIG.ORIGIN_X;
+    const originY = isMobile ? 350 : CONFIG.ORIGIN_Y;
+
+    const scaleW = availW  / canvasW;
+    const scaleH = availH  / canvasH;
+    scale        = Math.max(0.28, Math.min(scaleW, scaleH, 2.5));
+    canvas.width  = Math.round(canvasW * scale);
+    canvas.height = Math.round(canvasH * scale);
     HEX = CONFIG.HEX_SIZE * scale;
-    OX  = CONFIG.ORIGIN_X * scale;
-    OY  = CONFIG.ORIGIN_Y * scale;
+    OX  = originX * scale;
+    OY  = originY * scale;
   }
 
   // ── Hex coordinate math ──────────────────────────────────────────
@@ -184,6 +203,7 @@ const Renderer = (() => {
     }
 
     const def     = CONFIG.PIECES[piece.type];
+    if (!def) return;  // unknown type (BLOCKERや不正データ) は描画しない
     const isP1    = piece.owner === 'p1';
     const pCol    = CONFIG.PIECE_COLOR[piece.type];
     const plrCol  = isP1 ? CONFIG.CLR.P1 : CONFIG.CLR.P2;
@@ -238,7 +258,8 @@ const Renderer = (() => {
     // Charging indicator: direction arrow + countdown badge
     if (piece.chargingSkill) {
       const { dir, turnsLeft } = piece.chargingSkill;
-      // Compute direction using neighbor cellconst nRow = row + dir[0], nCol = col + dir[1];
+      // Compute direction using neighbor cell
+      const nRow = row + dir[0], nCol = col + dir[1];
       if (isValidCell(nRow, nCol)) {
         const { x: nx, y: ny } = cellToScreen(nRow, nCol);
         ctx.beginPath();
@@ -288,14 +309,34 @@ const Renderer = (() => {
       ctx.fill();
     }
 
-    // Damage flash
+    // Damage flash（拡張リング）
     if (flashSet && flashSet.has(piece.id)) {
-      ctx.globalAlpha = 0.5;
+      const expiry   = typeof flashSet.get === 'function' ? (flashSet.get(piece.id) ?? Date.now() + 900) : Date.now() + 900;
+      const elapsed  = Math.max(0, 900 - (expiry - Date.now()));
+      const progress = Math.min(1, elapsed / 900);
+      // 拡張リング
       ctx.beginPath();
-      ctx.arc(cx, cy, pr * 1.2, 0, Math.PI * 2);
-      ctx.fillStyle = '#ff1744';
-      ctx.fill();
-      ctx.globalAlpha = 1.0;
+      ctx.arc(cx, cy, pr * (1.0 + progress * 1.3), 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,50,50,${(1 - progress) * 0.9})`;
+      ctx.lineWidth   = 3 * scale;
+      ctx.stroke();
+      // 内側リング（前半のみ）
+      if (progress < 0.6) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, pr * (1.0 + progress * 0.5), 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,180,0,${(1 - progress / 0.6) * 0.6})`;
+        ctx.lineWidth   = 1.5 * scale;
+        ctx.stroke();
+      }
+      // 赤オーバーレイ（前半のみ）
+      if (progress < 0.35) {
+        ctx.globalAlpha = (0.35 - progress) / 0.35 * 0.55;
+        ctx.beginPath();
+        ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff1744';
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+      }
     }
 
     // Selection glow
@@ -435,36 +476,124 @@ const Renderer = (() => {
     }
   }
 
-  /** Draw reserved movement paths for P1 pieces */
+  /** Draw movement paths: reserved (2-turn) AND queued normal MOVE actions */
   function drawReservedPaths(state, layer) {
+    // ── 2ターン予約移動経路 ──
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
         if (!isValidCell(r, c)) continue;
         const p = state[layer][r][c].piece;
         if (!p || p.owner !== 'p1' || !p.reservedMove) continue;
         const { toR, toC, viaR, viaC } = p.reservedMove;
-        const src = cellToScreen(r, c);
-        const dst = cellToScreen(toR, toC);
-        // Draw dashed arrow from source to destination
-        ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        if (viaR != null) {
-          const via = cellToScreen(viaR, viaC);
-          ctx.lineTo(via.x, via.y);
-        }
-        ctx.lineTo(dst.x, dst.y);
-        ctx.strokeStyle = 'rgba(100,200,255,0.7)';
-        ctx.lineWidth = 2 * scale;
+        drawMovePath(cellToScreen(r, c), cellToScreen(toR, toC),
+                     viaR != null ? cellToScreen(viaR, viaC) : null);
+      }
+    }
+
+    // ── キュー済み通常MOVE経路（1ターン移動） ──
+    for (const action of (state.playerActions ?? [])) {
+      if (action.type !== 'MOVE' || action.fromLayer !== layer) continue;
+      drawMovePath(
+        cellToScreen(action.fromR, action.fromC),
+        cellToScreen(action.toR,   action.toC),
+        null
+      );
+    }
+  }
+
+  function drawActionPreviews(state, layer) {
+    for (const action of (state.playerActions ?? [])) {
+      const tL = action.toLayer ?? layer;
+      if (tL !== layer) continue;
+      const pos = cellToScreen(action.toR, action.toC);
+
+      if (action.type === 'TERRAIN') {
+        const isUp  = action.terrainDir === 'up';
+        const color = isUp ? 'rgba(255,193,7,0.9)' : 'rgba(140,90,40,0.95)';
+        hexPath(pos.x, pos.y, HEX * 0.55);
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 2 * scale;
         ctx.setLineDash([4 * scale, 3 * scale]);
         ctx.stroke();
         ctx.setLineDash([]);
-        // Arrow head at destination
+        ctx.font = `bold ${Math.max(9, Math.round(HEX * 0.62))}px serif`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = color;
+        ctx.fillText(isUp ? '凸' : '凹', pos.x, pos.y);
+
+      } else if (action.type === 'ATTACK' || action.type === 'SKILL_SNIPE') {
         ctx.beginPath();
-        ctx.arc(dst.x, dst.y, 4 * scale, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(100,200,255,0.9)';
-        ctx.fill();
+        ctx.arc(pos.x, pos.y, HEX * 0.48, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(244,67,54,0.85)';
+        ctx.lineWidth   = 2.5 * scale;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, HEX * 0.18, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(244,67,54,0.7)';
+        ctx.lineWidth   = 1.5 * scale;
+        ctx.stroke();
+        const s = HEX * 0.52;
+        ctx.strokeStyle = 'rgba(244,67,54,0.55)';
+        ctx.lineWidth   = 1.5 * scale;
+        ctx.beginPath(); ctx.moveTo(pos.x - s, pos.y); ctx.lineTo(pos.x + s, pos.y); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(pos.x, pos.y - s); ctx.lineTo(pos.x, pos.y + s); ctx.stroke();
+
+      } else if (['SKILL_PUSH','SKILL_REPAIR','SKILL_SWAP'].includes(action.type)) {
+        hexPath(pos.x, pos.y, HEX * 0.52);
+        ctx.strokeStyle = 'rgba(171,71,188,0.8)';
+        ctx.lineWidth   = 2 * scale;
+        ctx.setLineDash([3 * scale, 3 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+      } else if (action.type === 'REACT') {
+        // ⚡ 反応監視: 紫リング + ⚡マーク
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, HEX * 0.50, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(171,71,188,0.85)';
+        ctx.lineWidth   = 2.5 * scale;
+        ctx.setLineDash([4 * scale, 2 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = `bold ${Math.max(9, Math.round(HEX * 0.55))}px serif`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(171,71,188,0.9)';
+        ctx.fillText('⚡', pos.x, pos.y);
+
+      } else if (action.type === 'SKILL_VINE') {
+        // 🌿 蔦設置: 緑リング + 🌿マーク
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, HEX * 0.50, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(102,187,106,0.85)';
+        ctx.lineWidth   = 2.5 * scale;
+        ctx.setLineDash([4 * scale, 2 * scale]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = `bold ${Math.max(9, Math.round(HEX * 0.55))}px serif`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = 'rgba(102,187,106,0.9)';
+        ctx.fillText('🌿', pos.x, pos.y);
       }
     }
+  }
+
+  function drawMovePath(src, dst, via) {
+    ctx.beginPath();
+    ctx.moveTo(src.x, src.y);
+    if (via) ctx.lineTo(via.x, via.y);
+    ctx.lineTo(dst.x, dst.y);
+    ctx.strokeStyle = 'rgba(100,200,255,0.7)';
+    ctx.lineWidth   = 2 * scale;
+    ctx.setLineDash([4 * scale, 3 * scale]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(dst.x, dst.y, 4 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(100,200,255,0.9)';
+    ctx.fill();
   }
 
   /** Draw ZOC overlay for enemy pieces threatening p1 */
@@ -590,6 +719,37 @@ const Renderer = (() => {
   let _reserveCells = [];
   function setReserveCells(cells) { _reserveCells = cells ?? []; }
 
+  let _deathEffects = [];
+  function setDeathEffects(effects) { _deathEffects = effects; }
+
+  function drawDeathEffects() {
+    const now = Date.now();
+    for (const eff of _deathEffects) {
+      if (eff.expiry < now) continue;
+      const dur      = eff.expiry - eff.startTime;
+      const progress = Math.min(1, (now - eff.startTime) / dur);
+      const fade     = 1 - progress;
+      // 外側リング
+      ctx.beginPath();
+      ctx.arc(eff.x, eff.y, HEX * (0.3 + progress * 1.4), 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,80,0,${fade * 0.9})`;
+      ctx.lineWidth   = 3 * scale;
+      ctx.stroke();
+      // 内側リング
+      ctx.beginPath();
+      ctx.arc(eff.x, eff.y, HEX * (0.2 + progress * 0.8), 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(255,220,0,${fade * 0.7})`;
+      ctx.lineWidth   = 2 * scale;
+      ctx.stroke();
+      // ✕クロス
+      const sz = HEX * 0.28 * (1 - progress * 0.4);
+      ctx.strokeStyle = `rgba(255,100,0,${fade * 0.9})`;
+      ctx.lineWidth   = 2.5 * scale;
+      ctx.beginPath(); ctx.moveTo(eff.x - sz, eff.y - sz); ctx.lineTo(eff.x + sz, eff.y + sz); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(eff.x + sz, eff.y - sz); ctx.lineTo(eff.x - sz, eff.y + sz); ctx.stroke();
+    }
+  }
+
   function draw(state, posOverrides, flashSet) {
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -637,8 +797,9 @@ const Renderer = (() => {
       drawSelectedCell(state.selected.r, state.selected.c);
     }
 
-    // 3.5 Reserved paths + tires
+    // 3.5 Reserved paths + tires + action previews
     drawReservedPaths(state, layer);
+    drawActionPreviews(state, layer);
     drawTires(state, layer);
 
     // 4. Terrain + pieces (back to front: higher row = drawn later)
@@ -666,10 +827,13 @@ const Renderer = (() => {
         && state.selected.r === row && state.selected.c === col;
       drawPiece(row, col, piece, isSel, posOverrides, flashSet);
     }
+
+    // 5. 死亡エフェクト
+    drawDeathEffects();
   }
 
   return {
     init, resize, setViewDir, getViewDir,
-    cellToScreen, screenToCell, hitTestPiece, draw, setPaintMarkers, setReserveCells,
+    cellToScreen, screenToCell, hitTestPiece, draw, setPaintMarkers, setReserveCells, setDeathEffects,
   };
 })();

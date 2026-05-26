@@ -7,14 +7,15 @@ const CONFIG = Object.freeze({
   BOARD_SIZE:   15,      // 2*BOARD_RADIUS + 1 (array storage)
 
   // Canvas dimensions (unscaled — resize() applies scale)
-  CANVAS_W: 720,
+  // CANVAS_W > CANVAS_H で盤を左寄せ（右パネル分の空白をキャンバス右側に確保）
+  CANVAS_W: 1110,
   CANVAS_H: 740,
 
   // Hex cell radius in px (unscaled)
   HEX_SIZE: 26,
 
   // Canvas origin = center hex screen position
-  ORIGIN_X: 360,
+  ORIGIN_X: 379,
   ORIGIN_Y: 370,
 
   // ─── Piece definitions ───────────────────────────────────────────

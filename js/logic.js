@@ -163,6 +163,7 @@ function getValidMoves(state, layer, r, c) {
   if (piece.surrounded) return [];
 
   const def = CONFIG.PIECES[piece.type];
+  if (!def) return [];  // unknown type (BLOCKER等) は移動不可
 
   // Stage-2 wall: melee pieces are immobile (can't move off the wall)
   const myT = cell.terrain;
@@ -690,21 +691,13 @@ function checkVictory(state) {
   return null;
 }
 
-// ── Resolve simultaneous actions ──────────────────────────────────
+// ── Phase-based resolution API (ペア別処理) ───────────────────────
 
 /**
- * actions = array of action objects:
- * { owner, type:'MOVE'|'ATTACK'|'TERRAIN'|'DEPLOY'|'PASS',
- *   pieceId, fromLayer, fromR, fromC,
- *   toLayer, toR, toC,
- *   terrainDir }
- *
- * Returns array of log strings.
+ * 準備フェーズ: ターン開始時の状態リセットのみ。
+ * 持続行動（予約移動・溜めスキル発動・タイヤ移動）は resolveSustainedActions に集約。
  */
-function resolveActions(state, allActions) {
-  const log = [];
-
-  // ── Step 0: Clear per-turn status ───────────────────────
+function resolvePreamble(state, allActions, log) {
   for (const layer of ['surface','depth']) {
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
@@ -713,140 +706,216 @@ function resolveActions(state, allActions) {
       }
     }
   }
+}
 
-  // ── Step 0.1: Charging → launch tires ─────────────────
-  updateChargingSkills(state, log);
+/**
+ * 持続行動フェーズ: 1手目→2手目→…の順に処理。
+ * sustainedActions = [{type:'RESERVED_MOVE'|'CHARGING_TICK', pieceId, setOnSlot, ...}]
+ * - 同じ slot 内では並列処理（RESERVED_MOVE と CHARGING_TICK のグループごと）
+ * - タイヤの移動は最後にまとめて処理（slot を跨いだ累積タイヤ移動）
+ */
+function resolveSustainedActions(state, sustainedActions, log) {
+  // setOnSlot 順 (0 → 1) で処理
+  for (const slotIdx of [0, 1]) {
+    const slotActions = sustainedActions.filter(a => (a.setOnSlot ?? 0) === slotIdx);
+    if (slotActions.length === 0) continue;
 
-  // ── Step 0.2: Move all active tires ────────────────────
+    // RESERVED_MOVE を並列処理（目的地への移動）
+    for (const a of slotActions.filter(x => x.type === 'RESERVED_MOVE')) {
+      processReservedMove(state, a, log);
+    }
+
+    // CHARGING_TICK を並列処理（溜めカウント減算 + 完了でタイヤ発射）
+    for (const a of slotActions.filter(x => x.type === 'CHARGING_TICK')) {
+      processChargingTick(state, a, log);
+    }
+  }
+
+  // タイヤ移動（既存タイヤ + 今回発射されたタイヤ全てを一括処理）
   if (state.tires.length > 0) processTires(state, log);
+}
 
-  // ── Step 1: Terrain + Vine placement ───────────────────
-  // Vine placement (SKILL_VINE) processed first
-  for (const a of allActions.filter(a => a.type === 'SKILL_VINE')) {
+/**
+ * 予約移動の解決。経由地は当該駒の RESERVE_SET pair 処理時に既に到達済みのため、
+ * ここで処理するのは目的地への移動 (viaR=null 状態) のみ。
+ */
+function processReservedMove(state, a, log) {
+  const srcLoc = findPieceById(state, a.pieceId);
+  if (!srcLoc) return;
+  const piece = srcLoc.piece;
+  const def   = CONFIG.PIECES[piece.type];
+  const isFlying = def?.height === 3;
+  const who = piece.owner === 'p1' ? 'あなた' : 'CPU';
+  const lbl = CONFIG.PIECE_LABEL[piece.type];
+
+  const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+  const blockedByPiece   = !!dstCell?.piece;
+  const blockedByTerrain = dstCell && def && !isFlying && !isLandable(dstCell.terrain, def.height);
+
+  if (dstCell && !blockedByPiece && !blockedByTerrain) {
+    movePieceOnGrid(state, srcLoc.layer, srcLoc.r, srcLoc.c, a.toLayer, a.toR, a.toC);
+    applyLandingEffect(state[a.toLayer][a.toR][a.toC].piece, state[a.toLayer][a.toR][a.toC].terrain);
+    log.push(`予約移動: ${who} ${lbl} → (${a.toR},${a.toC})`);
+  } else {
+    const reason = blockedByPiece ? '駒に塞がれて移動できず' : '通行不可';
+    log.push(`予約移動キャンセル: ${who} ${lbl} 目的地${reason}(${a.toR},${a.toC})`);
+  }
+  const finalLoc = findPieceById(state, a.pieceId);
+  if (finalLoc) finalLoc.piece.reservedMove = null;
+}
+
+/**
+ * 溜めスキルのカウント減算と発射。前ターン以前にチャージされたものが対象。
+ * 完了でタイヤを生成（state.tires に push）。
+ */
+function processChargingTick(state, a, log) {
+  const loc = findPieceById(state, a.pieceId);
+  const cs = loc?.piece?.chargingSkill;
+  if (!cs) return;
+  cs.turnsLeft--;
+  if (cs.turnsLeft <= 0) {
+    state.tireCount++;
+    state.tires.push({
+      id: `t${state.tireCount}`,
+      r: loc.r, c: loc.c, layer: loc.layer,
+      dr: cs.dir[0], dc: cs.dir[1],
+      subtype: cs.subtype, owner: loc.piece.owner,
+      setOnSlot: cs.setOnSlot ?? 0,
+    });
+    const who = loc.piece.owner === 'p1' ? 'あなた' : 'CPU';
+    const tn  = cs.subtype === 'light' ? '軽' : '重';
+    log.push(`🛞${tn}ローラー発射: ${who}`);
+    loc.piece.chargingSkill = null;
+  }
+}
+
+function resolvePairActions(state, pairActions, log) {
+  // Vine
+  for (const a of pairActions.filter(a => a.type === 'SKILL_VINE')) {
     const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
-    if (!tCell) continue;
-    if (tCell.piece) continue;  // can't place vine on occupied cell
+    if (!tCell || tCell.piece) continue;
     const t = tCell.terrain;
     if (t.type !== 'flat' && t.type !== 'vine') continue;
-
-    // Remove existing vine on this cell if any
     if (t.type === 'vine') removeVineAt(state, a.toLayer, a.toR, a.toC);
-
-    // Enforce max vines per player (auto-remove oldest)
     const ownerVines = a.owner === 'p1' ? state.p1Vines : state.p2Vines;
     if (ownerVines.length >= CONFIG.VINE_MAX) {
       const oldest = ownerVines.shift();
       const oldCell = state[oldest.layer]?.[oldest.r]?.[oldest.c];
-      if (oldCell && oldCell.terrain.type === 'vine') {
-        oldCell.terrain = { type: 'flat', stage: 0 };
-      }
+      if (oldCell && oldCell.terrain.type === 'vine') oldCell.terrain = { type: 'flat', stage: 0 };
     }
     ownerVines.push({ r: a.toR, c: a.toC, layer: a.toLayer });
     tCell.terrain = { type: 'vine', stage: 1, placedBy: a.owner };
     const who = a.owner === 'p1' ? 'あなた' : 'CPU';
-    // P1 sees own vine location; P2 vine hides coordinates
     if (a.owner === 'p1') log.push(`🌿蔦設置: ${who} (${a.toR},${a.toC})`);
-    else                   log.push(`🌿蔦設置: ${who}`);
+    else                  log.push(`🌿蔦設置: ${who}`);
   }
-
+  // Terrain
   const terrainMap = {};
-  for (const a of allActions.filter(a => a.type === 'TERRAIN')) {
+  for (const a of pairActions.filter(a => a.type === 'TERRAIN')) {
     const key = `${a.toLayer}_${a.toR}_${a.toC}`;
     if (terrainMap[key]) {
-      if (terrainMap[key].terrainDir !== a.terrainDir) {
-        terrainMap[key] = 'CANCEL';
-        log.push('地形変形: 競合キャンセル');
-      }
-    } else {
-      terrainMap[key] = a;
-    }
+      if (terrainMap[key].terrainDir !== a.terrainDir) { terrainMap[key] = 'CANCEL'; log.push('地形変形: 競合キャンセル'); }
+    } else { terrainMap[key] = a; }
   }
   for (const [, a] of Object.entries(terrainMap)) {
     if (a === 'CANCEL') continue;
     const msg = applyTerrainChange(state, a.toLayer, a.toR, a.toC, a.terrainDir, a.owner);
     if (msg) {
       const who = a.owner === 'p1' ? 'あなた' : 'CPU';
-      // P1's terrain shows coordinates; P2's hides them
       if (a.owner === 'p1') log.push(`地形変形: ${who} ${msg}`);
-      else                   log.push(`地形変形: ${who}`);
+      else                  log.push(`地形変形: ${who}`);
     }
   }
-
-  // ── Step 1.5: Reserved move execution ──────────────────
-  for (const a of allActions.filter(a => a.type === 'RESERVED_MOVE')) {
-    const srcLoc = findPieceById(state, a.pieceId);
-    if (!srcLoc) continue;
-    const who = srcLoc.piece.owner === 'p1' ? 'あなた' : 'CPU';
-    const lbl = CONFIG.PIECE_LABEL[srcLoc.piece.type];
-
-    // Move to intermediate (via) if set
-    if (a.viaR != null) {
-      const viaCell = state[a.viaLayer]?.[a.viaR]?.[a.viaC];
-      if (viaCell && !viaCell.piece) {
-        movePieceOnGrid(state, srcLoc.layer, srcLoc.r, srcLoc.c, a.viaLayer, a.viaR, a.viaC);
-        applyLandingEffect(state[a.viaLayer][a.viaR][a.viaC].piece, state[a.viaLayer][a.viaR][a.viaC].terrain);
-      }
-    }
-
-    // Move to final destination
-    const newLoc = findPieceById(state, a.pieceId);
-    if (!newLoc) continue;
-    const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
-    if (dstCell && !dstCell.piece) {
-      movePieceOnGrid(state, newLoc.layer, newLoc.r, newLoc.c, a.toLayer, a.toR, a.toC);
-      applyLandingEffect(state[a.toLayer][a.toR][a.toC].piece, state[a.toLayer][a.toR][a.toC].terrain);
-    }
-
-    const finalLoc = findPieceById(state, a.pieceId);
-    if (finalLoc) finalLoc.piece.reservedMove = null;
-    log.push(`予約移動: ${who} ${lbl} → (${a.toR},${a.toC})`);
-  }
-
-  // ── Step 2: Movements ───────────────────────────────────
+  // Move + RESERVE_SET（経由地への移動として MOVE と同等に扱う）
+  //   - 異オーナーが同マスへ → BOUNCE（双方失敗）
+  //   - 同オーナーが同マスへ → 先着優先・後着は失敗ログ
+  //   - 解決時に移動先が他駒で占有 → 失敗ログ
+  //   - RESERVE_SET 失敗時は piece.reservedMove も完全クリア
   const moveMap = {};
-  for (const a of allActions.filter(a => a.type === 'MOVE')) {
+  for (const a of pairActions.filter(a => a.type === 'MOVE' || a.type === 'RESERVE_SET')) {
     const key = `${a.toLayer}_${a.toR}_${a.toC}`;
     if (moveMap[key]) {
-      moveMap[key] = 'BOUNCE';
-      log.push(`移動衝突: バウンス (${a.toR},${a.toC})`);
+      const existing = moveMap[key];
+      if (existing === 'BOUNCE') {
+        const piece = state[a.fromLayer]?.[a.fromR]?.[a.fromC]?.piece;
+        const who = a.owner === 'p1' ? 'あなた' : 'CPU';
+        const lbl = piece ? CONFIG.PIECE_LABEL[piece.type] : '駒';
+        log.push(`移動失敗: ${who} ${lbl} 衝突地点に到達できず (${a.toR},${a.toC})`);
+        if (a.type === 'RESERVE_SET' && piece) piece.reservedMove = null;
+      } else if (existing.owner !== a.owner) {
+        // 異オーナー: 双方バウンス（既存も RESERVE_SET なら reservedMove クリア）
+        moveMap[key] = 'BOUNCE';
+        log.push(`移動衝突: バウンス (${a.toR},${a.toC})`);
+        if (existing.type === 'RESERVE_SET') {
+          const ePiece = state[existing.fromLayer]?.[existing.fromR]?.[existing.fromC]?.piece;
+          if (ePiece) ePiece.reservedMove = null;
+        }
+        if (a.type === 'RESERVE_SET') {
+          const aPiece = state[a.fromLayer]?.[a.fromR]?.[a.fromC]?.piece;
+          if (aPiece) aPiece.reservedMove = null;
+        }
+      } else {
+        // 同オーナー: 後着失敗
+        const piece = state[a.fromLayer]?.[a.fromR]?.[a.fromC]?.piece;
+        const who = a.owner === 'p1' ? 'あなた' : 'CPU';
+        const lbl = piece ? CONFIG.PIECE_LABEL[piece.type] : '駒';
+        log.push(`移動失敗: ${who} ${lbl} 自駒に塞がれて移動できず (${a.toR},${a.toC})`);
+        if (a.type === 'RESERVE_SET' && piece) piece.reservedMove = null;
+      }
     } else {
       moveMap[key] = a;
     }
   }
   for (const [, a] of Object.entries(moveMap)) {
     if (a === 'BOUNCE') continue;
-    // Verify source piece still there (terrain change may have affected it)
     const srcCell = state[a.fromLayer]?.[a.fromR]?.[a.fromC];
     if (!srcCell?.piece || srcCell.piece.id !== a.pieceId) continue;
-    // Verify destination still empty
     const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
-    if (!dstCell || dstCell.piece) continue;
-
+    if (!dstCell || dstCell.piece) {
+      const piece = srcCell.piece;
+      const who = a.owner === 'p1' ? 'あなた' : 'CPU';
+      const lbl = CONFIG.PIECE_LABEL[piece.type];
+      const reason = dstCell?.piece?.owner === a.owner
+        ? '自駒に塞がれて移動できず'
+        : '駒に塞がれて移動できず';
+      log.push(`移動失敗: ${who} ${lbl} ${reason} (${a.toR},${a.toC})`);
+      if (a.type === 'RESERVE_SET') piece.reservedMove = null;
+      continue;
+    }
     movePieceOnGrid(state, a.fromLayer, a.fromR, a.fromC, a.toLayer, a.toR, a.toC);
-    // Apply landing effects
     const piece = state[a.toLayer][a.toR][a.toC].piece;
     applyLandingEffect(piece, state[a.toLayer][a.toR][a.toC].terrain);
-    const lbl = CONFIG.PIECE_LABEL[piece.type];
-    log.push(`${a.owner === 'p1' ? 'あなた' : 'CPU'} ${lbl} → (${a.toR},${a.toC})`);
-  }
 
-  // ── Step 2.5: Layer transits ─────────────────────────────
-  for (const a of allActions.filter(a => a.type === 'TRANSIT')) {
+    if (a.type === 'RESERVE_SET') {
+      // 経由地に到達 → reservedMove を {目的地, viaR:null, setOnSlot} に更新
+      // 目的地情報は queueAction で piece.reservedMove に既に書き込まれている前提
+      const finalTo = piece.reservedMove
+        ? { toR: piece.reservedMove.toR, toC: piece.reservedMove.toC, toLayer: piece.reservedMove.toLayer }
+        : { toR: a.finalToR, toC: a.finalToC, toLayer: a.finalToLayer };
+      piece.reservedMove = {
+        toR: finalTo.toR, toC: finalTo.toC, toLayer: finalTo.toLayer,
+        viaR: null, viaC: null, viaLayer: null,
+        setOnSlot: a.setOnSlot ?? 0,
+      };
+      log.push(`🔵予約移動(経由): ${a.owner === 'p1' ? 'あなた' : 'CPU'} ${CONFIG.PIECE_LABEL[piece.type]} → (${a.toR},${a.toC}) 次T→(${finalTo.toR},${finalTo.toC})`);
+    } else {
+      log.push(`${a.owner === 'p1' ? 'あなた' : 'CPU'} ${CONFIG.PIECE_LABEL[piece.type]} → (${a.toR},${a.toC})`);
+    }
+  }
+  // Transit
+  for (const a of pairActions.filter(a => a.type === 'TRANSIT')) {
     const srcCell = state[a.fromLayer]?.[a.fromR]?.[a.fromC];
     if (!srcCell?.piece || srcCell.piece.id !== a.pieceId) continue;
     const destCell = state[a.toLayer]?.[a.toR]?.[a.toC];
     if (!destCell || destCell.piece) continue;
     movePieceOnGrid(state, a.fromLayer, a.fromR, a.fromC, a.toLayer, a.toR, a.toC);
     const p = state[a.toLayer][a.toR][a.toC].piece;
-    const who  = p.owner === 'p1' ? 'あなた' : 'CPU';
-    const dest = a.toLayer === 'surface' ? '表層' : '深層';
-    log.push(`層移動: ${who} ${CONFIG.PIECE_LABEL[p.type]} → ${dest} (${a.toR},${a.toC})`);
+    log.push(`層移動: ${p.owner === 'p1' ? 'あなた' : 'CPU'} ${CONFIG.PIECE_LABEL[p.type]} → ${a.toLayer === 'surface' ? '表層' : '深層'} (${a.toR},${a.toC})`);
   }
-
-  // ── Step 3: Deploy from hand ────────────────────────────
-  for (const a of allActions.filter(a => a.type === 'DEPLOY')) {
+  // Deploy
+  for (const a of pairActions.filter(a => a.type === 'DEPLOY')) {
     const hand = a.owner === 'p1' ? state.p1Hand : state.p2Hand;
-    const idx  = hand.findIndex(p => p.id === a.pieceId);
+    const idx = hand.findIndex(p => p.id === a.pieceId);
     if (idx < 0) continue;
     const dstCell = state[a.toLayer]?.[a.toR]?.[a.toC];
     if (!dstCell || dstCell.piece) continue;
@@ -854,109 +923,73 @@ function resolveActions(state, allActions) {
     dstCell.piece = piece;
     log.push(`${a.owner === 'p1' ? 'あなた' : 'CPU'} ${CONFIG.PIECE_LABEL[piece.type]} 配置 (${a.toR},${a.toC})`);
   }
-
-  // ── Step 4: Apply terrain effects at final positions ────
+  // Terrain effects at final positions
   for (const layer of ['surface','depth']) {
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
         const cell = state[layer][r][c];
-        if (!cell.piece) continue;
-        applyLandingEffect(cell.piece, cell.terrain);
+        if (cell.piece) applyLandingEffect(cell.piece, cell.terrain);
       }
     }
   }
-
-  // ── Step 4.5: Apply vine slowing after all moves ────────
   applyVineEffects(state);
-
-  // ── Step 5: Attacks ─────────────────────────────────────
-  const damaged = {};  // pieceId → dmg (aggregate)
-  for (const a of allActions.filter(a => a.type === 'ATTACK')) {
+  // Attacks
+  const damaged = {};
+  for (const a of pairActions.filter(a => a.type === 'ATTACK')) {
     const attLoc = findPieceById(state, a.pieceId);
     if (!attLoc) continue;
-
-    const targetCell = state[a.toLayer]?.[a.toR]?.[a.toC];
-    if (!targetCell?.piece) continue;
-    if (targetCell.piece.owner === a.owner) continue;
-    if (targetCell.piece.reviving) continue;
-
-    // Quick range re-check after moves
-    const dist = Math.max(
-      Math.abs(attLoc.r - a.toR), Math.abs(attLoc.c - a.toC)
-    );
+    const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!tCell?.piece || tCell.piece.owner === a.owner || tCell.piece.reviving) continue;
+    const dist = Math.max(Math.abs(attLoc.r - a.toR), Math.abs(attLoc.c - a.toC));
     const def = CONFIG.PIECES[attLoc.piece.type];
-    // Cross-layer attack (PHANTOM only)
     const sameLayer = attLoc.layer === a.toLayer;
     if (!sameLayer && attLoc.piece.type !== 'PHANTOM') continue;
     if (sameLayer && dist > def.atkRange) continue;
     if (!sameLayer && !(attLoc.r === a.toR && attLoc.c === a.toC)) continue;
-
-    damaged[targetCell.piece.id] = (damaged[targetCell.piece.id] ?? 0) + 1;
+    damaged[tCell.piece.id] = (damaged[tCell.piece.id] ?? 0) + 1;
   }
-
-  // REACT: fire if enemy is on the watched cell after all moves
-  for (const a of allActions.filter(a => a.type === 'REACT')) {
+  for (const a of pairActions.filter(a => a.type === 'REACT')) {
     const attLoc = findPieceById(state, a.pieceId);
     if (!attLoc) continue;
-    const watchCell = state[a.toLayer]?.[a.toR]?.[a.toC];
-    if (!watchCell?.piece) continue;
-    if (watchCell.piece.owner === a.owner) continue;
-    if (watchCell.piece.reviving) continue;
+    const wCell = state[a.toLayer]?.[a.toR]?.[a.toC];
+    if (!wCell?.piece || wCell.piece.owner === a.owner || wCell.piece.reviving) continue;
     const dist = hexDist(attLoc.r, attLoc.c, a.toR, a.toC);
     const def = CONFIG.PIECES[attLoc.piece.type];
     const atkBonus = isAdjacentToWall(state, attLoc.layer, attLoc.r, attLoc.c) ? 1 : 0;
     const reactWho = a.owner === 'p1' ? 'あなた' : 'CPU';
     if (dist <= def.atkRange + atkBonus) {
-      damaged[watchCell.piece.id] = (damaged[watchCell.piece.id] ?? 0) + 1;
+      damaged[wCell.piece.id] = (damaged[wCell.piece.id] ?? 0) + 1;
       if (a.owner === 'p1') log.push(`⚡反応発動: ${reactWho} ${CONFIG.PIECE_LABEL[attLoc.piece.type]} → (${a.toR},${a.toC})`);
-      else                   log.push(`⚡反応発動: ${reactWho}`);
-    } else {
-      log.push(`⚡反応不発: ${reactWho}`);
-    }
+      else                  log.push(`⚡反応発動: ${reactWho}`);
+    } else { log.push(`⚡反応不発: ${reactWho}`); }
   }
-
-  // SKILL_SNIPE (range-5 attack)
-  for (const a of allActions.filter(a => a.type === 'SKILL_SNIPE')) {
+  for (const a of pairActions.filter(a => a.type === 'SKILL_SNIPE')) {
     const sniper = findPieceById(state, a.pieceId);
     if (!sniper) continue;
     const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
     if (!tCell?.piece || tCell.piece.owner === sniper.piece.owner || tCell.piece.reviving) continue;
     const dr = Math.abs(sniper.r - a.toR), dc = Math.abs(sniper.c - a.toC);
-    if ((dr > 0 && dc > 0) || dr + dc > 5) continue;  // ortho, max 5
+    if ((dr > 0 && dc > 0) || dr + dc > 5) continue;
     damaged[tCell.piece.id] = (damaged[tCell.piece.id] ?? 0) + 1;
     const who = sniper.piece.owner === 'p1' ? 'あなた' : 'CPU';
     if (sniper.piece.owner === 'p1') log.push(`狙撃: ${who} レンジャー → (${a.toR},${a.toC})`);
     else                             log.push(`狙撃: ${who} レンジャーが使用`);
   }
-
-  // Collect damaged pieces for flash
   state.damagedThisTurn = Object.keys(damaged);
-
-  // Apply damage and handle defeats
   for (const [pid, dmg] of Object.entries(damaged)) {
     const loc = findPieceById(state, pid);
     if (!loc) continue;
     loc.piece.hp -= dmg;
     const lbl = CONFIG.PIECE_LABEL[loc.piece.type];
     const who = loc.piece.owner === 'p1' ? 'あなた' : 'CPU';
-    log.push(`ダメージ: ${who} ${lbl} -${dmg}HP (残${Math.max(0,loc.piece.hp)})`);
-
+    log.push(`ダメージ: ${who} ${lbl} -${dmg}HP (残${Math.max(0, loc.piece.hp)})`);
     if (loc.piece.hp <= 0) {
-      // Check if already reviving (permanent elimination)
-      if (loc.piece.reviving) {
-        state[loc.layer][loc.r][loc.c].piece = null;
-        log.push(`完全消滅: ${who} ${lbl}`);
-      } else {
-        transferToRevival(state, loc.layer, loc.r, loc.c);
-        log.push(`転送: ${who} ${lbl} → 反対層へ`);
-      }
+      if (loc.piece.reviving) { state[loc.layer][loc.r][loc.c].piece = null; log.push(`完全消滅: ${who} ${lbl}`); }
+      else { transferToRevival(state, loc.layer, loc.r, loc.c); log.push(`転送: ${who} ${lbl} → 反対層へ`); }
     }
   }
-
-  // ── Step 5.5: Non-damage skills ──────────────────────────
-
-  // WARDEN push
-  for (const a of allActions.filter(a => a.type === 'SKILL_PUSH')) {
+  // Non-damage skills
+  for (const a of pairActions.filter(a => a.type === 'SKILL_PUSH')) {
     const wLoc = findPieceById(state, a.pieceId);
     if (!wLoc) continue;
     const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
@@ -966,29 +999,22 @@ function resolveActions(state, allActions) {
     const who = wLoc.piece.owner === 'p1' ? 'あなた' : 'CPU';
     if (!inBounds(pr, pc)) { log.push(`押し出し: ${who} ウォーデン (盤外)`); continue; }
     const dCell = state[a.toLayer][pr][pc];
-    if (dCell.piece || !isLandable(dCell.terrain, CONFIG.PIECES[tCell.piece.type].height)) {
-      log.push(`押し出し: ${who} ウォーデン (阻止)`); continue;
-    }
+    if (dCell.piece || !isLandable(dCell.terrain, CONFIG.PIECES[tCell.piece.type].height)) { log.push(`押し出し: ${who} ウォーデン (阻止)`); continue; }
     const pushedPiece = tCell.piece;
     movePieceOnGrid(state, a.toLayer, a.toR, a.toC, a.toLayer, pr, pc);
     applyLandingEffect(pushedPiece, state[a.toLayer][pr][pc].terrain);
     if (wLoc.piece.owner === 'p1') log.push(`押し出し: ${who} ウォーデン → (${pr},${pc})`);
-    else                           log.push(`押し出し: ${who} ウォーデンを使用`);
+    else                          log.push(`押し出し: ${who} ウォーデンを使用`);
   }
-
-  // ENGINEER repair
-  for (const a of allActions.filter(a => a.type === 'SKILL_REPAIR')) {
+  for (const a of pairActions.filter(a => a.type === 'SKILL_REPAIR')) {
     const engLoc = findPieceById(state, a.pieceId);
     if (!engLoc) continue;
     const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
     if (!tCell?.piece || tCell.piece.owner !== engLoc.piece.owner || tCell.piece.reviving) continue;
     tCell.piece.hp = Math.min(tCell.piece.hp + 1, tCell.piece.maxHp);
-    const who = engLoc.piece.owner === 'p1' ? 'あなた' : 'CPU';
-    log.push(`修繕: ${who} エンジニア → ${CONFIG.PIECE_LABEL[tCell.piece.type]} +1HP`);
+    log.push(`修繕: ${engLoc.piece.owner === 'p1' ? 'あなた' : 'CPU'} エンジニア → ${CONFIG.PIECE_LABEL[tCell.piece.type]} +1HP`);
   }
-
-  // STRIKER position swap
-  for (const a of allActions.filter(a => a.type === 'SKILL_SWAP')) {
+  for (const a of pairActions.filter(a => a.type === 'SKILL_SWAP')) {
     const sLoc = findPieceById(state, a.pieceId);
     if (!sLoc) continue;
     const tCell = state[a.toLayer]?.[a.toR]?.[a.toC];
@@ -996,50 +1022,39 @@ function resolveActions(state, allActions) {
     const sCell = state[sLoc.layer][sLoc.r][sLoc.c];
     const tp = tCell.piece, sp = sCell.piece;
     sCell.piece = tp; tCell.piece = sp;
-    applyLandingEffect(tp, sCell.terrain);
-    applyLandingEffect(sp, tCell.terrain);
-    const who = sp.owner === 'p1' ? 'あなた' : 'CPU';
-    log.push(`位置交換: ${who} ストライカー ⇄ ${CONFIG.PIECE_LABEL[tp.type]}`);
+    applyLandingEffect(tp, sCell.terrain); applyLandingEffect(sp, tCell.terrain);
+    log.push(`位置交換: ${sp.owner === 'p1' ? 'あなた' : 'CPU'} ストライカー ⇄ ${CONFIG.PIECE_LABEL[tp.type]}`);
   }
-
-  // ROLLER charging start
-  for (const a of allActions.filter(a =>
-      a.type === 'SKILL_ROLLER_LIGHT' || a.type === 'SKILL_ROLLER_HEAVY')) {
+  for (const a of pairActions.filter(a => a.type === 'SKILL_ROLLER_LIGHT' || a.type === 'SKILL_ROLLER_HEAVY')) {
     const loc = findPieceById(state, a.pieceId);
-    if (!loc || loc.piece.chargingSkill) continue;  // already charging
+    if (!loc || loc.piece.chargingSkill) continue;
     const dr = a.toR - a.fromR, dc = a.toC - a.fromC;
-    const cooldown = a.type === 'SKILL_ROLLER_LIGHT'
-      ? CONFIG.LIGHT_COOLDOWN : CONFIG.HEAVY_COOLDOWN;
+    const cooldown = a.type === 'SKILL_ROLLER_LIGHT' ? CONFIG.LIGHT_COOLDOWN : CONFIG.HEAVY_COOLDOWN;
     loc.piece.chargingSkill = {
       subtype: a.type === 'SKILL_ROLLER_LIGHT' ? 'light' : 'heavy',
       dir: [dr, dc], turnsLeft: cooldown,
+      setOnSlot: a.setOnSlot ?? 0,
     };
     const who = a.owner === 'p1' ? 'あなた' : 'CPU';
     const tn = a.type === 'SKILL_ROLLER_LIGHT' ? '軽' : '重';
     if (a.owner === 'p1') log.push(`🛞${tn}ローラーチャージ: ${who} (${cooldown}T後)`);
-    else                   log.push(`🛞${tn}ローラーチャージ: ${who}`);
+    else                  log.push(`🛞${tn}ローラーチャージ: ${who}`);
   }
-
-  // ── Step 6: Escape from trap (if player used pass/escape action) ──
-  for (const a of allActions.filter(a => a.type === 'ESCAPE')) {
+  for (const a of pairActions.filter(a => a.type === 'ESCAPE')) {
     tryEscape(state, a.fromLayer, a.fromR, a.fromC);
     log.push(`脱出: (${a.fromR},${a.fromC})`);
   }
+}
 
-  // ── Step 6.5: Update surrounded status ──────────────────
+function resolvePostTurn(state, log) {
   updateSurrounded(state);
-
-  // ── Step 7: Occupation ──────────────────────────────────
   updateOccupation(state);
-
   const winner = checkVictory(state);
   if (winner) {
     state.winner = winner;
     state.phase  = 'GAME_OVER';
     log.push(`★ 勝利: ${winner === 'p1' ? 'あなた' : 'CPU'}`);
   }
-
-  return log;
 }
 
 // ── Roller direction targets ──────────────────────────────────────

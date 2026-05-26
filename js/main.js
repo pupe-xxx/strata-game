@@ -15,8 +15,56 @@ let currentPaintColor  = 'red'; // 現在の選択色（右クリック/長押�
 let _longPressTimer = null;
 let _longPressStart = null;
 
+// Pinch zoom + pan
+let _zoomLevel      = 1.0;
+let _panX           = 0;
+let _panY           = 0;
+let _pinchStartDist = null;
+let _pinchStartZoom = 1.0;
+let _pinchMidSX     = 0; // pinch midpoint screen X
+let _pinchMidSY     = 0;
+let _pinchMidCX     = 0; // pinch midpoint canvas X (buffer px)
+let _pinchMidCY     = 0;
+let _pinchNatLeft   = 0; // canvas natural screen-left (without transform)
+let _pinchNatTop    = 0;
+// Single-finger pan
+let _panTouchId     = null;
+let _panStartCX     = 0;
+let _panStartCY     = 0;
+let _panStartPX     = 0;
+let _panStartPY     = 0;
+let _panMoved       = false;
+const PAN_THRESHOLD = 8;
+
+// ダブルタップ検出（キャンバス）
+let _canvasDtTimer  = null;
+let _canvasDtPX     = 0;
+let _canvasDtPY     = 0;
+
+// メモモード
+let _memoMode       = false;
+
+function getPinchDist(t) {
+  const dx = t[0].clientX - t[1].clientX;
+  const dy = t[0].clientY - t[1].clientY;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+function applyCanvasZoom() {
+  const cv = document.getElementById('game-canvas');
+  if (!cv) return;
+  if (_zoomLevel <= 1.0 && _panX === 0 && _panY === 0) {
+    cv.style.transform = '';
+    cv.style.transformOrigin = '';
+  } else {
+    cv.style.transformOrigin = '0 0';
+    cv.style.transform = `translate(${_panX}px,${_panY}px) scale(${_zoomLevel})`;
+  }
+}
+
 // Damage flash: pieceId → expiry timestamp (display-only, not in state)
 const damageFlash = new Map();
+// Death effects: [{x, y, startTime, expiry}]
+const deathEffects = [];
 
 // ── Animation ─────────────────────────────────────────────────────
 const ANIM_DURATION = 500;  // ms
@@ -85,16 +133,44 @@ function animateGroup(group, onDone) {
   requestAnimationFrame(frame);
 }
 
-/** グループ配列を順番に再生（各グループは同時） */
-function startAnimation(groups, onDone) {
-  // groups は Array<Array<entry>> または Array<entry>（後方互換）
+/** グループ配列を順番に再生。後発グループの駒はスナップショット位置に固定して表示 */
+function startAnimation(groups, snapshot, onDone) {
   const normalised = Array.isArray(groups[0]) ? groups : [groups];
   let i = 0;
+
   function next() {
     if (i >= normalised.length) { onDone(); return; }
-    const g = normalised[i++];
-    if (g.length === 0) { next(); return; }
-    animateGroup(g, () => setTimeout(next, 120));
+    const gi    = i++;
+    const group = normalised[gi];
+    if (group.length === 0) { next(); return; }
+
+    // 後発グループの駒をスナップショット位置に固定
+    const laterIds = new Set();
+    for (let j = gi + 1; j < normalised.length; j++) {
+      for (const e of normalised[j]) laterIds.add(e.pieceId);
+    }
+    const staticPos = new Map();
+    for (const [id, pos] of snapshot) {
+      if (laterIds.has(id)) staticPos.set(id, { x: pos.x, y: pos.y });
+    }
+
+    const start = performance.now();
+    function frame(ts) {
+      const raw = Math.min(1, (ts - start) / ANIM_DURATION);
+      const t   = easeInOut(raw);
+      const overrides = new Map(staticPos);
+      for (const entry of group) {
+        overrides.set(entry.pieceId, {
+          x: entry.fromX + (entry.toX - entry.fromX) * t,
+          y: entry.fromY + (entry.toY - entry.fromY) * t,
+        });
+      }
+      const af = damageFlash.size > 0 ? damageFlash : null;
+      Renderer.draw(G, overrides, af);
+      if (raw < 1) requestAnimationFrame(frame);
+      else setTimeout(next, 120);
+    }
+    requestAnimationFrame(frame);
   }
   next();
 }
@@ -109,16 +185,70 @@ function canUseRoller(pieceType) { return pieceType === 'ROLLER'; }
 
 function isMobile() { return window.innerWidth <= 700; }
 
+/**
+ * 状態を deep clone して 1手目（既設定の slot0 アクション）を仮適用し、
+ * 引数の関数 fn(simulatedState) を呼ぶ。元の state は変更されない。
+ *
+ * 用途: 2手目選択時に1手目の盤面変化（移動・地形・蔦・駒配置・攻撃等）すべてを反映した
+ *      上で getValidMoves 等を計算する。
+ *
+ * 1手目が未確定（actions が空）の場合は元 state でそのまま fn を呼ぶ。
+ */
+function withSimulatedP1Actions(state, actions, fn) {
+  if (!actions || actions.length === 0) return fn(state);
 
-// ── Tab / panel switching ──────────────────────────────────────────
-function switchInfoTab(tabName) {
-  document.querySelectorAll('.info-tab').forEach(t =>
-    t.classList.toggle('active', t.dataset.tab === tabName));
-  document.getElementById('tab-you-panel').style.display      = tabName === 'you'      ? '' : 'none';
-  const cpuPanel = document.getElementById('tab-cpu-panel');
-  if (cpuPanel) cpuPanel.style.display                        = tabName === 'cpu'      ? '' : 'none';
-  document.getElementById('tab-selected-panel').style.display = tabName === 'selected' ? '' : 'none';
+  const slot0 = actions[0];
+  if (!slot0 || slot0.type === 'PASS') return fn(state);
+
+  // deep clone で 1手目を仮適用
+  const cloned = JSON.parse(JSON.stringify(state));
+  // setOnSlot を埋めた1手目だけを resolvePairActions に通す
+  const slot0WithIdx = { ...slot0, setOnSlot: 0 };
+  resolvePairActions(cloned, [slot0WithIdx], []);
+  return fn(cloned);
 }
+
+/**
+ * 予約移動の経由地・目的地をセルリストから除外する。
+ * - 当ターンの RESERVE_SET アクション
+ * - 盤上の全駒が持つ既存 reservedMove（前ターン以前に設定されたもの）
+ *   ただし当ターンに RESERVE_SET したばかりの駒は1つ目のループで処理済み。
+ * 同じセルが複数回弾かれても結果は同じ（filter は冪等）。
+ */
+function filterReservedCells(state, actions, cells) {
+  const blocked = []; // {r, c, layer}
+
+  // 当ターンの RESERVE_SET（駒に reservedMove が書き込まれている）
+  for (const a of actions) {
+    if (a.type !== 'RESERVE_SET' || a.owner !== 'p1') continue;
+    const loc = findPieceById(state, a.pieceId);
+    const rm  = loc?.piece?.reservedMove;
+    if (!rm) continue;
+    if (rm.viaR != null) blocked.push({ r: rm.viaR, c: rm.viaC, layer: rm.viaLayer });
+    blocked.push({ r: rm.toR, c: rm.toC, layer: rm.toLayer });
+  }
+
+  // 盤上の全駒の既存 reservedMove（前ターン以前から保持しているもの）
+  for (const layer of ['surface','depth']) {
+    for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
+      for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
+        const p = state[layer][r][c].piece;
+        if (!p?.reservedMove) continue;
+        const rm = p.reservedMove;
+        if (rm.viaR != null) blocked.push({ r: rm.viaR, c: rm.viaC, layer: rm.viaLayer });
+        blocked.push({ r: rm.toR, c: rm.toC, layer: rm.toLayer });
+      }
+    }
+  }
+
+  if (blocked.length === 0) return cells;
+  return cells.filter(v =>
+    !blocked.some(b => b.r === v.r && b.c === v.c && b.layer === v.layer)
+  );
+}
+
+
+// ── Panel switching (tabs removed) ───────────────────────────────
 
 // Sync action button state to both desktop (#btn-X) and mobile (#mob-btn-X)
 function setActBtn(id, opts) {
@@ -131,23 +261,89 @@ function setActBtn(id, opts) {
   });
 }
 
+/**
+ * 与えられた state でアクションがまだ有効か検証する。
+ * 主にドラッグ&ドロップ swap 後の整合性チェックに使用。
+ * 戻り値: true = 有効, false = 不成立（先行手の影響で実行できなくなった）
+ */
+function validateAction(state, action) {
+  if (!action) return true;
+  if (action.type === 'PASS') return true;
+
+  // DEPLOY: 手駒に存在し、対象セルが空・着地可能か
+  if (action.type === 'DEPLOY') {
+    const hand = action.owner === 'p1' ? state.p1Hand : state.p2Hand;
+    if (!hand.find(p => p.id === action.pieceId)) return false;
+    const dst = state[action.toLayer]?.[action.toR]?.[action.toC];
+    return !!dst && !dst.piece;
+  }
+
+  // 駒の現在位置を ID で引く（先行手で移動している可能性）
+  const loc = findPieceById(state, action.pieceId);
+  if (!loc) return false;
+  const { layer, r, c } = loc;
+
+  const sameCell = (v) => v.r === action.toR && v.c === action.toC && v.layer === action.toLayer;
+
+  switch (action.type) {
+    case 'MOVE':
+      return getValidMoves(state, layer, r, c).some(sameCell);
+    case 'ATTACK':
+      return getValidAttacks(state, layer, r, c).some(sameCell);
+    case 'TERRAIN':
+      return getValidTerrainTargets(state, layer, r, c).some(sameCell);
+    case 'SKILL_VINE':
+      return getValidVineTargets(state, layer, r, c).some(sameCell);
+    case 'REACT':
+      return getValidReactTargets(state, layer, r, c).some(sameCell);
+    case 'TRANSIT': {
+      const dst = getTransitDest(state, layer, r, c);
+      return !!dst && dst.r === action.toR && dst.c === action.toC && dst.layer === action.toLayer;
+    }
+    case 'ESCAPE':
+      return !!loc.piece.trapped;
+    case 'SKILL_ROLLER_LIGHT':
+    case 'SKILL_ROLLER_HEAVY':
+      return getValidRollerDirections(state, layer, r, c).some(sameCell);
+    case 'SKILL_REPAIR':
+      return getValidRepairTargets(state, layer, r, c).some(sameCell);
+    case 'SKILL_PUSH':
+      return getValidPushTargets(state, layer, r, c).some(sameCell);
+    case 'SKILL_SNIPE':
+      return getValidSnipeTargets(state, layer, r, c).some(sameCell);
+    case 'SKILL_SWAP':
+      return getValidSwapTargets(state, layer, r, c).some(sameCell);
+    case 'RESERVE_SET': {
+      // 経由地が有効か（駒の reservedMove に最終目的地が入っている前提）
+      const rm = loc.piece.reservedMove;
+      if (!rm) return false;
+      const validVia = getValidReserveVia(state, layer, r, c, rm.toR, rm.toC);
+      return validVia.some(v => v.r === action.toR && v.c === action.toC && v.layer === action.toLayer);
+    }
+    default:
+      return true; // 不明なアクションは保守的に許可
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────
 function initGame() {
   G = createInitialState();
   generateEchoPoints(G);
   const ind = document.getElementById('layer-indicator');
   if (ind) { ind.textContent = '● 表層'; ind.className = 'surface'; }
-  // On mobile, move controls-row to be a direct grid child of game-layout
-  // so it gets its own grid row and isn't clipped by board-wrapper overflow.
   if (isMobile()) {
-    const ctrl      = document.getElementById('controls-row');
-    const gameLayout = document.getElementById('game-layout');
-    const infoPanel  = document.getElementById('info-panel');
-    gameLayout.insertBefore(ctrl, infoPanel);
-    // occ-section を side-panel に移動（モバイルでは occ-panel が非表示のため）
+    // action-float を game-layout の ctrl 領域へ移動
+    const actionFloat = document.getElementById('action-float');
+    const gameLayout  = document.getElementById('game-layout');
+    const infoPanel   = document.getElementById('info-panel');
+    if (actionFloat && gameLayout) gameLayout.insertBefore(actionFloat, infoPanel);
+    // occ-section を side-panel に移動（occ-float は pc-only で非表示のため）
     const occSection = document.getElementById('occ-section');
     const sidePanel  = document.getElementById('side-panel');
     if (occSection && sidePanel) sidePanel.insertBefore(occSection, sidePanel.firstChild);
+    // 占領詳細を初期折りたたみ状態に
+    const occDetail = document.getElementById('occ-detail');
+    if (occDetail && !isMobile()) occDetail.classList.add('collapsed');
   }
   Renderer.init(document.getElementById('game-canvas'));
   Renderer.resize();
@@ -175,7 +371,14 @@ function tick() {
   for (const [id, until] of damageFlash) {
     if (now > until) damageFlash.delete(id);
   }
-  const activeFlash = damageFlash.size > 0 ? new Set(damageFlash.keys()) : null;
+  // Cleanup expired death effects
+  if (deathEffects.length > 0) {
+    for (let k = deathEffects.length - 1; k >= 0; k--) {
+      if (deathEffects[k].expiry < now) deathEffects.splice(k, 1);
+    }
+    Renderer.setDeathEffects(deathEffects);
+  }
+  const activeFlash = damageFlash.size > 0 ? damageFlash : null;
   Renderer.draw(G, null, activeFlash);
   updateUI();
   if (G.phase !== 'GAME_OVER') {
@@ -190,6 +393,7 @@ function bindEvents() {
   canvas.addEventListener('click',       onCanvasClick);
   canvas.addEventListener('contextmenu', onCanvasRightClick);
   canvas.addEventListener('touchstart',  onCanvasTouchStart, { passive: false });
+  canvas.addEventListener('touchmove',   onCanvasTouchMove,  { passive: false });
   canvas.addEventListener('touchend',    onCanvasTouchEnd,   { passive: false });
 
   // Layer toggle (buttons)
@@ -209,7 +413,7 @@ function bindEvents() {
   if (boardWrapper) {
     boardWrapper.addEventListener('touchend', e => {
       // キャンバス・ボタン類をタップした場合は無視
-      if (e.target === canvas || e.target.closest('button, .act-btn, #controls-row')) return;
+      if (e.target === canvas || e.target.closest('button, .act-btn, #action-float')) return;
       if (_dtTimer) {
         clearTimeout(_dtTimer);
         _dtTimer = null;
@@ -297,11 +501,6 @@ function bindEvents() {
   // Confirm
   document.getElementById('btn-confirm').addEventListener('click', confirmTurn);
 
-  // Mobile: info tab buttons
-  document.querySelectorAll('.info-tab').forEach(btn => {
-    btn.addEventListener('click', () => switchInfoTab(btn.dataset.tab));
-  });
-
   // Mobile action buttons
   document.getElementById('mob-btn-vine')   ?.addEventListener('click', () => setActionMode('VINE'));
   document.getElementById('mob-btn-react')  ?.addEventListener('click', () => setActionMode('REACT'));
@@ -324,16 +523,59 @@ function bindEvents() {
     btn.addEventListener('click', () => applyTerrainDir(btn.dataset.mobDir));
   });
 
-  // Mobile: log popup
-  document.getElementById('btn-log-popup')?.addEventListener('click', () => {
-    document.getElementById('log-popup').style.display = 'flex';
+  // Side peek handlers
+  const closeFn = (el, hide) => {
+    el?.addEventListener('click',    e => { e.stopPropagation(); hide(); });
+    el?.addEventListener('touchend', e => { e.preventDefault(); e.stopPropagation(); hide(); });
+  };
+  document.getElementById('btn-log-popup')?.addEventListener('click', () => openSidePeek('log'));
+  document.getElementById('btn-piece-info')?.addEventListener('click', () => openSidePeek('piece'));
+  closeFn(document.getElementById('btn-close-peek'), closeSidePeek);
+  document.getElementById('side-peek-overlay')?.addEventListener('click', closeSidePeek);
+  document.getElementById('side-peek-overlay')?.addEventListener('touchend', e => {
+    e.preventDefault(); closeSidePeek();
   });
-  document.getElementById('btn-close-log')?.addEventListener('click', () => {
+
+  // Left peek（デッキ）
+  document.getElementById('btn-deck')?.addEventListener('click', () => openLeftPeek('both'));
+  closeFn(document.getElementById('btn-close-left-peek'), closeLeftPeek);
+  document.getElementById('left-peek-overlay')?.addEventListener('click', closeLeftPeek);
+  document.getElementById('left-peek-overlay')?.addEventListener('touchend', e => {
+    e.preventDefault(); closeLeftPeek();
+  });
+
+  // 旧ポップアップ（ログ）— 後方互換
+  closeFn(document.getElementById('btn-close-log'), () => {
     document.getElementById('log-popup').style.display = 'none';
   });
   document.getElementById('log-popup')?.addEventListener('click', e => {
     if (e.target === document.getElementById('log-popup'))
       document.getElementById('log-popup').style.display = 'none';
+  });
+  closeFn(document.getElementById('btn-close-piece-info'), () => {
+    document.getElementById('piece-info-popup').style.display = 'none';
+  });
+
+  closeFn(document.getElementById('btn-close-hand'), () => {
+    document.getElementById('hand-popup').style.display = 'none';
+  });
+  document.getElementById('hand-popup')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('hand-popup'))
+      document.getElementById('hand-popup').style.display = 'none';
+  });
+
+  // メモモード切り替え
+  document.getElementById('btn-memo')?.addEventListener('click', () => {
+    _memoMode = !_memoMode;
+    document.getElementById('btn-memo').classList.toggle('active', _memoMode);
+  });
+
+  // 占領状況トグル
+  document.getElementById('btn-occ-toggle')?.addEventListener('click', () => {
+    const detail = document.getElementById('occ-detail');
+    const btn    = document.getElementById('btn-occ-toggle');
+    detail.classList.toggle('collapsed');
+    btn.classList.toggle('open', !detail.classList.contains('collapsed'));
   });
 
   // Slot drag & drop (swap action order)
@@ -359,12 +601,38 @@ function bindEvents() {
       e.preventDefault();
       slot.classList.remove('drag-over');
       if (dragSrcIdx === null || dragSrcIdx === idx) return;
-      // Save, swap, redisplay
-      const saved = [...G.playerActions];
-      [saved[dragSrcIdx], saved[idx]] = [saved[idx], saved[dragSrcIdx]];
+      // 入れ替え案を作成
+      const swapped = [...G.playerActions];
+      [swapped[dragSrcIdx], swapped[idx]] = [swapped[idx], swapped[dragSrcIdx]];
+
+      // 入れ替え後の整合性検証: 新1手目を仮適用して新2手目が valid か
+      const newSlot0 = swapped[0];
+      const newSlot1 = swapped[1];
+      let valid = true;
+
+      // 新1手目自体が現在の盤面で valid か
+      if (newSlot0 && !validateAction(G, newSlot0)) valid = false;
+
+      // 新2手目が「新1手目を仮適用した状態」で valid か
+      if (valid && newSlot1) {
+        const cloned = JSON.parse(JSON.stringify(G));
+        if (newSlot0 && newSlot0.type !== 'PASS') {
+          resolvePairActions(cloned, [{ ...newSlot0, setOnSlot: 0 }], []);
+        }
+        if (!validateAction(cloned, newSlot1)) valid = false;
+      }
+
+      if (!valid) {
+        // 不成立 → 入れ替え拒否、UIだけ復元
+        setMessage('入れ替えできません: 競合する手のため元の順序に戻しました');
+        dragSrcIdx = null;
+        return;
+      }
+
+      // 検証OK → 入れ替えを反映
       G.playerActions = [];
       clearSlots();
-      saved.filter(Boolean).forEach((a, i) => {
+      swapped.filter(Boolean).forEach((a, i) => {
         G.playerActions.push(a);
         if (a.type === 'PASS') {
           const slotEl = document.getElementById(`slot-${i}`);
@@ -405,38 +673,128 @@ function setLayer(layer) {
 }
 
 // ── Canvas interaction ────────────────────────────────────────────
+function clientToCanvas(el, cx, cy) {
+  const rect = el.getBoundingClientRect();
+  return {
+    px: (cx - rect.left) * (el.width / rect.width),
+    py: (cy - rect.top)  * (el.height / rect.height),
+  };
+}
+
 function onCanvasTouchStart(e) {
   e.preventDefault();
-  const rect  = e.target.getBoundingClientRect();
-  const touch = e.changedTouches[0];
-  _longPressStart = { px: touch.clientX - rect.left, py: touch.clientY - rect.top };
-  _longPressTimer = setTimeout(() => {
-    if (_longPressStart) {
-      cyclePaintMarker(_longPressStart.px, _longPressStart.py);
+
+  if (e.touches.length === 2) {
+    // ─ ピンチ開始 ─
+    _longPressStart = null;
+    _panTouchId     = null;
+    if (_canvasDtTimer) { clearTimeout(_canvasDtTimer); _canvasDtTimer = null; }
+
+    _pinchStartDist = getPinchDist(e.touches);
+    _pinchStartZoom = _zoomLevel;
+    _pinchMidSX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+    _pinchMidSY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const cv   = e.target;
+    const rect = cv.getBoundingClientRect();
+    _pinchMidCX   = (_pinchMidSX - rect.left) * (cv.width  / rect.width);
+    _pinchMidCY   = (_pinchMidSY - rect.top)  * (cv.height / rect.height);
+    _pinchNatLeft = rect.left - _panX;
+    _pinchNatTop  = rect.top  - _panY;
+    return;
+  }
+
+  if (_pinchStartDist !== null) return;
+
+  // ─ シングルタッチ ─
+  const touch = e.touches[0];
+  _longPressStart = { x: touch.clientX, y: touch.clientY };
+
+  if (_zoomLevel > 1.0) {
+    _panTouchId = touch.identifier;
+    _panStartCX = touch.clientX;
+    _panStartCY = touch.clientY;
+    _panStartPX = _panX;
+    _panStartPY = _panY;
+    _panMoved   = false;
+  }
+}
+
+function onCanvasTouchMove(e) {
+  // ─ ピンチズーム ─
+  if (e.touches.length === 2 && _pinchStartDist !== null) {
+    e.preventDefault();
+    const newDist  = getPinchDist(e.touches);
+    const newZoom  = Math.max(1.0, Math.min(3.5, _pinchStartZoom * (newDist / _pinchStartDist)));
+    // ピンチ中心点を固定したまま拡縮
+    _panX      = _pinchMidSX - _pinchNatLeft - _pinchMidCX * newZoom;
+    _panY      = _pinchMidSY - _pinchNatTop  - _pinchMidCY * newZoom;
+    _zoomLevel = newZoom;
+    if (_zoomLevel <= 1.0) { _zoomLevel = 1.0; _panX = 0; _panY = 0; }
+    applyCanvasZoom();
+    return;
+  }
+
+  // ─ パン（1本指 ズーム中） ─
+  if (e.touches.length === 1 && _panTouchId !== null && _zoomLevel > 1.0) {
+    const touch = Array.from(e.touches).find(t => t.identifier === _panTouchId);
+    if (!touch) return;
+    const dx = touch.clientX - _panStartCX;
+    const dy = touch.clientY - _panStartCY;
+    if (!_panMoved && Math.sqrt(dx*dx + dy*dy) > PAN_THRESHOLD) {
+      _panMoved = true;
+      if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
       _longPressStart = null;
     }
-  }, 500);
+    if (_panMoved) {
+      e.preventDefault();
+      _panX = _panStartPX + dx;
+      _panY = _panStartPY + dy;
+      applyCanvasZoom();
+    }
+  }
 }
 
 function onCanvasTouchEnd(e) {
   e.preventDefault();
-  if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
-  if (!_longPressStart) return; // was long-press, handled already
-  const rect  = e.target.getBoundingClientRect();
-  const touch = e.changedTouches[0];
-  handleCanvasInteraction(touch.clientX - rect.left, touch.clientY - rect.top, false);
+  if (e.touches.length < 2) _pinchStartDist = null;
+  if (e.touches.length === 0) _panTouchId = null;
+
+  // パン中はゲーム操作しない
+  if (_panMoved) { _panMoved = false; _longPressStart = null; return; }
+  _panMoved = false;
+
+  if (!_longPressStart) return;
   _longPressStart = null;
+
+  const touch = e.changedTouches[0];
+  const { px, py } = clientToCanvas(e.target, touch.clientX, touch.clientY);
+
+  // ─ タップを即時処理（遅延なし） ─
+  if (_memoMode) {
+    cyclePaintMarker(px, py);
+  } else {
+    handleCanvasInteraction(px, py, false);
+  }
+
+  // ─ ダブルタップ検出（加算的：層切り替えも実行） ─
+  if (_canvasDtTimer) {
+    clearTimeout(_canvasDtTimer);
+    _canvasDtTimer = null;
+    setLayer(G.viewLayer === 'surface' ? 'depth' : 'surface');
+  } else {
+    _canvasDtTimer = setTimeout(() => { _canvasDtTimer = null; }, 280);
+  }
 }
 
 function onCanvasClick(e) {
-  const rect = e.target.getBoundingClientRect();
-  handleCanvasInteraction(e.clientX - rect.left, e.clientY - rect.top, false);
+  const { px, py } = clientToCanvas(e.target, e.clientX, e.clientY);
+  handleCanvasInteraction(px, py, false);
 }
 
 function onCanvasRightClick(e) {
   e.preventDefault();
-  const rect = e.target.getBoundingClientRect();
-  cyclePaintMarker(e.clientX - rect.left, e.clientY - rect.top);
+  const { px, py } = clientToCanvas(e.target, e.clientX, e.clientY);
+  cyclePaintMarker(px, py);
 }
 
 /** 右クリック/長押し：
@@ -525,6 +883,12 @@ function handleCanvasInteraction(px, py, isRightClick) {
       }
     }
 
+    // RESERVE_VIA 中（経由地選択）は駒の切り替え不可 — キャンセル扱い
+    if (G.actionMode === 'RESERVE_VIA') {
+      reserveDestination = null;
+      deselect();
+      return;
+    }
     // Click on own piece while targeting: switch selection
     if (clickedPiece && clickedPiece.owner === 'p1' && !clickedPiece.reviving) {
       const alreadyUsed = G.playerActions.some(a => a.pieceId === clickedPiece.id);
@@ -643,16 +1007,74 @@ function updateInfoPanel(piece, def, layer) {
   document.getElementById('info-trait').textContent   = info.trait;
 }
 
+function updatePieceInfoPopup(piece, def, layer) {
+  const emoji = CONFIG.PIECE_EMOJI[piece.type];
+  const lbl   = CONFIG.PIECE_LABEL[piece.type];
+  const owner = piece.owner === 'p1' ? 'あなた' : 'CPU';
+  const el = id => document.getElementById(id);
+  el('pip-name-header').textContent = `${emoji} ${lbl} (${owner})`;
+  el('pip-hp').textContent          = `HP ${piece.hp}/${piece.maxHp}  高さ ${def.height}  ${layer === 'surface' ? '表層' : '深層'}`;
+  const statuses = [
+    piece.trapped    ? '⚠ 穴に捕まっています' : '',
+    piece.reviving   ? `⚠ 復活まで${piece.reviveTimer}T` : '',
+    piece.vineSlowed ? '🌿 蔦減速' : '',
+    piece.surrounded ? '🔴 包囲状態' : '',
+  ].filter(Boolean).join(' / ');
+  el('pip-status').textContent = statuses;
+  const info = buildPieceInfo(piece, def);
+  el('pip-move').textContent    = info.move;
+  el('pip-attack').textContent  = info.attack;
+  el('pip-terrain').textContent = info.terrain;
+  el('pip-skill').textContent   = info.skill;
+  el('pip-trait').textContent   = info.trait;
+}
+
+function buildPieceInfo(piece, def) {
+  const moveEl   = document.getElementById('info-move');
+  const atkEl    = document.getElementById('info-attack');
+  const trnEl    = document.getElementById('info-terrain');
+  const sklEl    = document.getElementById('info-skill');
+  const traitEl  = document.getElementById('info-trait');
+  return {
+    move:    moveEl?.textContent    || `${def.moveDist}マス`,
+    attack:  atkEl?.textContent     || `射程${def.atkRange}`,
+    terrain: trnEl?.textContent     || `射程${def.terrainRange}`,
+    skill:   sklEl?.textContent     || '—',
+    trait:   traitEl?.textContent   || '—',
+  };
+}
+
+function showHandPopup(owner) {
+  const isP1    = owner === 'p1';
+  const title   = isP1 ? 'あなたの駒' : '相手の駒';
+  document.getElementById('hand-popup-title').textContent = title;
+
+  const content = document.getElementById('hand-popup-content');
+  content.innerHTML = '';
+
+  const piecesEl = document.getElementById(isP1 ? 'mob-p1-pieces' : 'mob-p2-pieces');
+  const handEl   = document.getElementById(isP1 ? 'mob-p1-hand'   : 'mob-p2-hand');
+  if (piecesEl) {
+    const pl = document.createElement('div');
+    pl.className = 'piece-list';
+    pl.innerHTML = piecesEl.innerHTML;
+    content.appendChild(pl);
+  }
+  if (handEl && handEl.children.length > 0) {
+    const ha = document.createElement('div');
+    ha.className = 'hand-area';
+    ha.innerHTML = handEl.innerHTML;
+    content.appendChild(ha);
+  }
+  document.getElementById('hand-popup').style.display = 'flex';
+}
+
 function clearInfoPanel() {
   document.getElementById('info-empty').style.display   = 'block';
   document.getElementById('info-content').style.display = 'none';
   document.body.classList.remove('piece-selected');
-  if (isMobile()) {
-    switchInfoTab('you');
-  } else {
-    document.getElementById('tab-selected-panel').style.display = 'none';
-    document.getElementById('tab-you-panel').style.display      = '';
-  }
+  document.getElementById('tab-selected-panel').style.display = 'none';
+  document.getElementById('tab-you-panel').style.display      = '';
 }
 
 // ── Piece selection ───────────────────────────────────────────────
@@ -708,9 +1130,20 @@ function selectPiece(layer, r, c) {
     reserveCells  = [];
     setMessage(`${lbl} 選択 — ${piece.reviving ? '復活待機中' : '包囲状態（移動不可）'}`);
   } else {
-    G.validCells  = getValidMoves(G, layer, r, c);
+    // 1手目の影響を全て仮適用して2手目の有効移動先を算出し、予約済みセルを後フィルタリング
+    G.validCells  = filterReservedCells(G, G.playerActions,
+      withSimulatedP1Actions(G, G.playerActions, (s) => {
+        const loc = findPieceById(s, piece.id);
+        return loc ? getValidMoves(s, loc.layer, loc.r, loc.c) : [];
+      }));
     G.attackCells = getValidAttacks(G, layer, r, c);
-    reserveCells  = (piece.reservedMove) ? [] : getValidReserveMoves(G, layer, r, c);
+    // 予約移動先: MOVE + RESERVE_SET 両方を考慮
+    reserveCells  = (piece.reservedMove) ? [] :
+      filterReservedCells(G, G.playerActions,
+        withSimulatedP1Actions(G, G.playerActions, (s) => {
+          const loc = findPieceById(s, piece.id);
+          return loc ? getValidReserveMoves(s, loc.layer, loc.r, loc.c) : [];
+        }));
     Renderer.setReserveCells(reserveCells);
     const zocNote = piece.vineSlowed ? ' ⚠蔦減速' : '';
     setMessage(`${lbl} 選択 — 緑:移動${G.validCells.length} 赤:攻撃${G.attackCells.length} 水:2T予約${reserveCells.length}${zocNote}`);
@@ -719,12 +1152,11 @@ function selectPiece(layer, r, c) {
 
   // Update info panel
   updateInfoPanel(piece, def, layer);
+  updatePieceInfoPopup(piece, def, layer);
+  if (_peekType === 'piece') syncPeekPiece();
   document.body.classList.add('piece-selected');
-  // PC: switch panels manually. Mobile: CSS (body.piece-selected) handles it.
-  if (!isMobile()) {
-    document.getElementById('tab-you-panel').style.display      = 'none';
-    document.getElementById('tab-selected-panel').style.display = '';
-  }
+  document.getElementById('tab-you-panel').style.display      = 'none';
+  document.getElementById('tab-selected-panel').style.display = '';
 }
 
 function selectHandPiece(piece) {
@@ -737,6 +1169,7 @@ function selectHandPiece(piece) {
   G.attackCells = [];
   G.terrainDir  = null;
   clearInfoPanel();
+  closeLeftPeek();
   // P1 deploy zone: bottom 3 hex rows (high row indices), valid hex cells only
   const deployStart = CONFIG.BOARD_SIZE - 4;
   for (let r = deployStart; r < CONFIG.BOARD_SIZE; r++) {
@@ -768,6 +1201,7 @@ function deselect() {
   document.getElementById('terrain-menu').style.display     = 'none';
   document.getElementById('mob-terrain-menu').style.display = 'none';
   document.getElementById('roller-menu').style.display      = 'none';
+  if (isMobile()) document.getElementById('btn-confirm').style.display = '';
   // 地形ボタン選択状態リセット
   document.querySelectorAll('.terrain-opt').forEach(b => b.classList.remove('selected'));
   clearInfoPanel();
@@ -783,6 +1217,7 @@ function setActionMode(mode) {
   if (mode === 'TERRAIN') {
     document.getElementById('terrain-menu').style.display = 'flex';
     document.getElementById('mob-terrain-menu').style.display = 'flex';
+    if (isMobile()) document.getElementById('btn-confirm').style.display = 'none';
     if (G.terrainDir === null) {
       // 方向未選択 → 選択待ちのまま
       G.actionMode = 'TERRAIN';
@@ -843,7 +1278,11 @@ function setActionMode(mode) {
       G.validCells = [{ r, c, layer }];
       setMessage('選択したマスを確認して脱出します');
     } else {
-      G.validCells = getValidMoves(G, layer, r, c);
+      G.validCells = filterReservedCells(G, G.playerActions,
+        withSimulatedP1Actions(G, G.playerActions, (s) => {
+          const loc = findPieceById(s, piece.id);
+          return loc ? getValidMoves(s, loc.layer, loc.r, loc.c) : [];
+        }));
       const zocNote = piece?.vineSlowed ? ' ⚠蔦減速' : piece?.surrounded ? ' ⚠包囲中' : '';
       setMessage(`移動先を選んでください (${G.validCells.length}箇所)${zocNote}`);
     }
@@ -868,16 +1307,26 @@ function setActionMode(mode) {
     setActBtn('btn-react', { active: true });
     return;
   } else if (mode === 'RESERVE') {
-    // Step 1: choose 2-turn destination
+    // Step 1: 2ターン先の目的地選択
     reserveDestination = null;
-    G.validCells = getValidReserveMoves(G, layer, r, c);
+    const piece = getPieceAt(G, layer, r, c);
+    G.validCells = filterReservedCells(G, G.playerActions,
+      withSimulatedP1Actions(G, G.playerActions, (s) => {
+        const loc = findPieceById(s, piece.id);
+        return loc ? getValidReserveMoves(s, loc.layer, loc.r, loc.c) : [];
+      }));
     setMessage(`🔵予約移動先を選んでください（2ターン先まで） (${G.validCells.length}箇所)`);
     document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
     return;
   } else if (mode === 'RESERVE_VIA') {
-    // Step 2: choose intermediate waypoint
+    // Step 2: 経由地選択
     if (!reserveDestination) return;
-    G.validCells = getValidReserveVia(G, layer, r, c, reserveDestination.r, reserveDestination.c);
+    const piece = getPieceAt(G, layer, r, c);
+    G.validCells = filterReservedCells(G, G.playerActions,
+      withSimulatedP1Actions(G, G.playerActions, (s) => {
+        const loc = findPieceById(s, piece.id);
+        return loc ? getValidReserveVia(s, loc.layer, loc.r, loc.c, reserveDestination.r, reserveDestination.c) : [];
+      }));
     setMessage(`🔵経由マスを選んでください → (${reserveDestination.r},${reserveDestination.c}) (${G.validCells.length}箇所)`);
     return;
   }
@@ -923,11 +1372,13 @@ function queueAction(tr, tc, tLayer) {
     action.type = 'ESCAPE';
   }
 
-  // Reserve: store on piece directly (consumes 1 action slot, auto-moves next turn)
+  // Reserve: store on piece directly (経由地は当ターン pair 処理で実行され、目的地は次ターン持続行動で発動)
   if (actionType === 'RESERVE_SET' && reserveDestination) {
+    const slotIdx = G.playerActions.length; // このアクションが入る slot 番号
     piece.reservedMove = {
       toR: reserveDestination.r, toC: reserveDestination.c, toLayer: reserveDestination.layer,
       viaR: tr, viaC: tc, viaLayer: tLayer ?? layer,
+      setOnSlot: slotIdx,
     };
     action.type = 'RESERVE_SET';
     reserveDestination = null;
@@ -948,6 +1399,7 @@ function queueAction(tr, tc, tLayer) {
   document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('terrain-menu').style.display     = 'none';
   document.getElementById('mob-terrain-menu').style.display = 'none';
+  if (isMobile()) document.getElementById('btn-confirm').style.display = '';
   clearInfoPanel();
 
   const remaining = 2 - G.playerActions.length;
@@ -1000,6 +1452,12 @@ function fillSlot(idx, action, piece) {
 }
 
 function clearSlot(idx) {
+  // RESERVE_SET キャンセル時は駒の reservedMove も消す
+  const removed = G.playerActions[idx];
+  if (removed?.type === 'RESERVE_SET') {
+    const loc = findPieceById(G, removed.pieceId);
+    if (loc) loc.piece.reservedMove = null;
+  }
   const remaining = G.playerActions.filter((_, i) => i !== idx);
   clearSlots();
   remaining.forEach((a, i) => {
@@ -1019,13 +1477,15 @@ function clearSlot(idx) {
 }
 
 function clearSlots() {
+  // ※ piece.reservedMove は clearSlot（個別キャンセル）のみがクリアする。
+  //   confirmTurn 経由の clearSlots では消さない（次ターンに実行させるため）。
   G.playerActions = [];
   for (let i = 0; i < 2; i++) {
     const slotEl = document.getElementById(`slot-${i}`);
     slotEl.querySelector('.slot-text').textContent = '未設定';
     slotEl.classList.remove('filled');
     slotEl.querySelector('.slot-clear').style.display = 'none';
-    }
+  }
   document.getElementById('btn-confirm').disabled = true;
 }
 
@@ -1037,92 +1497,189 @@ function confirmTurn() {
   setMessage('CPU思考中…');
 
   setTimeout(() => {
-    // Auto-add reserved moves for P1 pieces
+    // CPUのアクション取得
+    const cpuActions = CpuAI.getCpuActions(G);
+
+    // 当ターン中に新規 RESERVE_SET / SKILL_ROLLER した駒は持続行動から除外する
+    const allPairActions = [...G.playerActions, ...cpuActions];
+    const newReserveIds = new Set(
+      allPairActions.filter(a => a.type === 'RESERVE_SET').map(a => a.pieceId)
+    );
+    const newChargeIds = new Set(
+      allPairActions.filter(a => a.type === 'SKILL_ROLLER_LIGHT' || a.type === 'SKILL_ROLLER_HEAVY').map(a => a.pieceId)
+    );
+
+    // 持続行動アクションを生成（前ターン以前に設定された予約・溜め）
+    // 全駒（P1/P2）をスキャン
+    const sustainedActions = [];
     for (const layer of ['surface','depth']) {
       for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
         for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
           const p = G[layer][r][c].piece;
-          if (p && p.owner === 'p1' && p.reservedMove) {
+          if (!p) continue;
+          if (p.reservedMove && !newReserveIds.has(p.id)) {
             const rv = p.reservedMove;
-            G.playerActions.push({
-              owner: 'p1', type: 'RESERVED_MOVE', pieceId: p.id,
+            sustainedActions.push({
+              owner: p.owner, type: 'RESERVED_MOVE', pieceId: p.id,
               fromLayer: layer, fromR: r, fromC: c,
               toLayer: rv.toLayer, toR: rv.toR, toC: rv.toC,
               viaLayer: rv.viaLayer, viaR: rv.viaR, viaC: rv.viaC,
+              setOnSlot: rv.setOnSlot ?? 0,
+            });
+          }
+          if (p.chargingSkill && !newChargeIds.has(p.id)) {
+            sustainedActions.push({
+              owner: p.owner, type: 'CHARGING_TICK', pieceId: p.id,
+              setOnSlot: p.chargingSkill.setOnSlot ?? 0,
             });
           }
         }
       }
     }
 
-    const snapshot   = snapshotPositions(G);
-    const cpuActions = CpuAI.getCpuActions(G);
-
-    // ── アクションをペアに分割（1P①+2P①、1P②+2P②） ──────────
     const p1 = G.playerActions;
     const p2 = cpuActions.map(a => ({ ...a, owner: 'p2' }));
     const pairCount = Math.max(p1.length, p2.length);
     const pairs = [];
     for (let i = 0; i < pairCount; i++) {
       const pair = [];
-      if (p1[i]) pair.push(p1[i]);
-      if (p2[i]) pair.push(p2[i]);
+      if (p1[i]) pair.push({ ...p1[i], setOnSlot: i });
+      if (p2[i]) pair.push({ ...p2[i], setOnSlot: i });
       pairs.push(pair);
     }
-    const allActions = pairs.flat();
 
-    const log = resolveActions(G, allActions);
+    // ── 準備フェーズ: 状態リセットのみ ──────────────────────────
+    const preambleLog = [];
+    resolvePreamble(G, [], preambleLog);
 
-    // ── アニメーションをペア別に分割 ─────────────────────────────
-    const fullQueue = buildAnimQueue(snapshot, G);
-    const pairGroups = pairs.map(pair => {
-      const ids = new Set(pair.map(a => a.pieceId));
-      return fullQueue.filter(e => ids.has(e.pieceId));
-    });
-    // スキル押し出し等で動いた駒（どのペアにも属さない）は最終グループへ
-    const assigned = new Set(pairGroups.flat().map(e => e.pieceId));
-    const leftover  = fullQueue.filter(e => !assigned.has(e.pieceId));
-    if (leftover.length > 0) {
-      if (pairGroups.length > 0) pairGroups[pairGroups.length - 1].push(...leftover);
-      else pairGroups.push(leftover);
+    // ── 1手目・2手目処理 ──────────────────────────────────────
+    const pairData = [];
+    if (preambleLog.length > 0) {
+      pairData.push({ queue: [], log: preambleLog, damaged: [], deathPositions: [] });
     }
+
+    for (const pair of pairs) {
+      const snapBefore = snapshotPositions(G);
+      const pairLog = [];
+      resolvePairActions(G, pair, pairLog);
+
+      // 死亡検出
+      const deathPos = [];
+      for (const [id, snapPos] of snapBefore) {
+        let found = false;
+        outer: for (const l of ['surface','depth']) {
+          for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
+            for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
+              if (G[l][r][c].piece?.id === id) { found = true; break outer; }
+            }
+          }
+        }
+        if (!found) deathPos.push({ x: snapPos.x, y: snapPos.y });
+      }
+
+      pairData.push({
+        queue:          buildAnimQueue(snapBefore, G),
+        log:            pairLog,
+        damaged:        [...(G.damagedThisTurn ?? [])],
+        deathPositions: deathPos,
+      });
+      G.damagedThisTurn = [];
+    }
+
+    // ── 持続行動フェーズ: 予約移動・溜めスキル発動・タイヤ移動 ──
+    {
+      const snapBefore = snapshotPositions(G);
+      const sustainedLog = [];
+      resolveSustainedActions(G, sustainedActions, sustainedLog);
+
+      const deathPos = [];
+      for (const [id, snapPos] of snapBefore) {
+        let found = false;
+        outer: for (const l of ['surface','depth']) {
+          for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
+            for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
+              if (G[l][r][c].piece?.id === id) { found = true; break outer; }
+            }
+          }
+        }
+        if (!found) deathPos.push({ x: snapPos.x, y: snapPos.y });
+      }
+
+      pairData.push({
+        queue:          buildAnimQueue(snapBefore, G),
+        log:            sustainedLog,
+        damaged:        [...(G.damagedThisTurn ?? [])],
+        deathPositions: deathPos,
+      });
+      G.damagedThisTurn = [];
+    }
+
+    // ── ターン後処理（占領・勝利判定）─────────────────────────
+    const postLog = [];
+    resolvePostTurn(G, postLog);
 
     clearSlots();
     G.turn++;
     updateUI();
 
-    const finish = () => {
-      const flashUntil = Date.now() + 900;
-      for (const pid of G.damagedThisTurn ?? []) damageFlash.set(pid, flashUntil);
-      G.damagedThisTurn = [];
+    // ── アニメーション逐次再生 ────────────────────────────────
+    let pairIdx = 0;
 
-      log.forEach(msg => {
+    const finishAll = () => {
+      [...pairData.flatMap(d => d.log), ...postLog].forEach(msg => {
         const isP1  = msg.includes('あなた');
         const isP2  = msg.includes('CPU');
         const isSys = msg.startsWith('★') || msg.includes('ターン');
         addLog(msg, isSys ? 'system' : isP1 ? 'p1' : isP2 ? 'p2' : '');
       });
-
       tickReviveTimers(G);
-
-      if (G.phase === 'GAME_OVER') {
-        Renderer.draw(G);
-        showGameOver(G.winner);
-        return;
-      }
-
+      if (G.phase === 'GAME_OVER') { Renderer.draw(G); showGameOver(G.winner); return; }
       G.phase = 'PLAYER_INPUT';
       setMessage(`ターン ${G.turn} — 駒を選択してください`);
       document.getElementById('turn-display').textContent = `ターン ${G.turn}`;
       tick();
     };
 
-    if (fullQueue.length > 0) {
-      startAnimation(pairGroups, finish);
-    } else {
-      Renderer.draw(G);
-      finish();
+    function animateNextPair() {
+      if (pairIdx >= pairData.length) { finishAll(); return; }
+      const data = pairData[pairIdx++];
+
+      const flashUntil = Date.now() + 900;
+      for (const pid of data.damaged) damageFlash.set(pid, flashUntil);
+
+      const onPairDone = () => {
+        const now = Date.now();
+        for (const pos of data.deathPositions) {
+          deathEffects.push({ x: pos.x, y: pos.y, startTime: now, expiry: now + 1200 });
+        }
+        if (data.deathPositions.length > 0) Renderer.setDeathEffects(deathEffects);
+        setTimeout(animateNextPair, data.damaged.length > 0 ? 500 : 200);
+      };
+
+      if (data.queue.length === 0) {
+        Renderer.draw(G, null, damageFlash.size > 0 ? damageFlash : null);
+        onPairDone();
+        return;
+      }
+
+      const start = performance.now();
+      (function frame(ts) {
+        const raw = Math.min(1, (ts - start) / ANIM_DURATION);
+        const t   = easeInOut(raw);
+        const overrides = new Map();
+        for (const entry of data.queue) {
+          overrides.set(entry.pieceId, {
+            x: entry.fromX + (entry.toX - entry.fromX) * t,
+            y: entry.fromY + (entry.toY - entry.fromY) * t,
+          });
+        }
+        Renderer.draw(G, overrides, damageFlash.size > 0 ? damageFlash : null);
+        if (raw < 1) requestAnimationFrame(frame);
+        else onPairDone();
+      })(performance.now());
     }
+
+    animateNextPair();
   }, 200);
 }
 
@@ -1143,7 +1700,9 @@ function updateUI() {
   const s1 = G.occScore?.p1 ?? 0;
   const s2 = G.occScore?.p2 ?? 0;
   const scoreEl = document.getElementById('occ-score-display');
-  if (scoreEl) scoreEl.textContent = `あなた ${s1}pt  /  CPU ${s2}pt`;
+  if (scoreEl) scoreEl.textContent = isMobile()
+    ? `あなた ${s1}pt\nCPU   ${s2}pt`
+    : `あなた ${s1}pt  /  CPU ${s2}pt`;
 
   // ── エコーポイント状態 ──────────────────────────────────────────
   const ep = G.echoPoint;
@@ -1228,11 +1787,11 @@ function updatePieceList(owner) {
   const pcHand = document.getElementById(`${owner}-hand`);
   if (pcHand) buildHandChips(pcHand, owner);
 
-  // Mobile tab panels
-  const mobPieces = document.getElementById(`mob-${owner}-pieces`);
-  if (mobPieces) buildPieceChips(mobPieces, owner);
-  const mobHand = document.getElementById(`mob-${owner}-hand`);
-  if (mobHand) buildHandChips(mobHand, owner);
+  // Mobile left-peek panels
+  const lpPieces = document.getElementById(`mob-lp-${owner}-pieces`);
+  if (lpPieces) buildPieceChips(lpPieces, owner);
+  const lpHand = document.getElementById(`mob-lp-${owner}-hand`);
+  if (lpHand) buildHandChips(lpHand, owner);
 }
 
 // ── Log ──────────────────────────────────────────────────────────
@@ -1258,6 +1817,105 @@ function addLog(msg, cls = '') {
     popupEl.prepend(entry);
     while (popupEl.children.length > 60) popupEl.removeChild(popupEl.lastChild);
   }
+
+  // Side peek log mirror
+  const spLog = document.getElementById('sp-log-list');
+  if (spLog) {
+    const entry = document.createElement('div');
+    entry.className = className;
+    entry.textContent = msg;
+    spLog.prepend(entry);
+    while (spLog.children.length > 60) spLog.removeChild(spLog.lastChild);
+  }
+}
+
+// ── Side Peek ─────────────────────────────────────────────────────
+let _peekType = null;
+
+function openSidePeek(type) {
+  _peekType = type;
+  const peek  = document.getElementById('side-peek');
+  const title = document.getElementById('side-peek-title');
+  document.getElementById('sp-log').style.display   = type === 'log'   ? 'flex' : 'none';
+  document.getElementById('sp-piece').style.display = type === 'piece' ? 'flex' : 'none';
+
+  if (type === 'log') {
+    title.textContent = 'ログ';
+  } else if (type === 'piece') {
+    title.textContent = '駒情報';
+    syncPeekPiece();
+  }
+  // display:none → display:block してからクラス追加でアニメーション発火
+  peek.style.display = 'block';
+  peek.offsetHeight; // reflow
+  peek.classList.add('open');
+}
+
+function closeSidePeek() {
+  const peek = document.getElementById('side-peek');
+  peek.classList.remove('open');
+  _peekType = null;
+  // トランジション(0.25s)完了後にdisplay:none（transitionend非依存で確実）
+  setTimeout(() => {
+    if (!peek.classList.contains('open')) peek.style.display = 'none';
+  }, 300);
+}
+
+// ── Left Peek（あなた / 相手）────────────────────────────────────
+let _leftPeekOwner = null;
+
+function openLeftPeek(owner) {
+  _leftPeekOwner = owner;
+  const peek = document.getElementById('left-peek');
+  const showP1 = owner === 'p1' || owner === 'both';
+  const showP2 = owner === 'p2' || owner === 'both';
+  document.getElementById('lp-p1-section').style.display = showP1 ? 'flex' : 'none';
+  document.getElementById('lp-p2-section').style.display = showP2 ? 'flex' : 'none';
+  document.getElementById('left-peek-title').textContent =
+    owner === 'p1' ? 'あなた' : owner === 'p2' ? '相手' : '部隊';
+  peek.style.display = 'block';
+  peek.offsetHeight;
+  peek.classList.add('open');
+}
+
+function closeLeftPeek() {
+  const peek = document.getElementById('left-peek');
+  peek.classList.remove('open');
+  _leftPeekOwner = null;
+  setTimeout(() => {
+    if (!peek.classList.contains('open')) peek.style.display = 'none';
+  }, 300);
+}
+
+function syncPeekPiece() {
+  if (!G || !G.selected) return;
+  const { layer, r, c } = G.selected;
+  const piece = getPieceAt(G, layer, r, c);
+  if (!piece) return;
+  const def   = CONFIG.PIECES[piece.type];
+  const emoji = CONFIG.PIECE_EMOJI[piece.type];
+  const lbl   = CONFIG.PIECE_LABEL[piece.type];
+  const owner = piece.owner === 'p1' ? 'あなた' : 'CPU';
+
+  document.getElementById('sp-piece-name').textContent =
+    `${emoji} ${lbl}`;
+  document.getElementById('sp-hp').textContent =
+    `HP ${piece.hp}/${piece.maxHp}  高さ ${def.height}  ${owner}  ${layer === 'surface' ? '表層' : '深層'}`;
+
+  const statuses = [
+    piece.trapped    ? '⚠ 穴に捕まっています' : '',
+    piece.reviving   ? `⚠ 復活まで${piece.reviveTimer}T` : '',
+    piece.vineSlowed ? '🌿 蔦減速' : '',
+    piece.surrounded ? '🔴 包囲状態' : '',
+  ].filter(Boolean).join(' / ');
+  document.getElementById('sp-status').textContent = statuses;
+
+  const info = buildPieceInfo(piece, def);
+  document.getElementById('sp-move').textContent    = info.move;
+  document.getElementById('sp-attack').textContent  = info.attack;
+  document.getElementById('sp-terrain').textContent = info.terrain;
+  document.getElementById('sp-skill').textContent   = info.skill;
+  document.getElementById('sp-trait').textContent   = info.trait;
 }
 
 // ── Game over ─────────────────────────────────────────────────────
