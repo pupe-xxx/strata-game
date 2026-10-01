@@ -8,28 +8,44 @@ import {
   getValidVineTargets, isValidCell, resolvePairActions, resolvePostTurn, resolvePreamble,
 } from '../game/logic';
 import { allPieces, createInitialState, findPieceById, getPieceAt, tickReviveTimers } from '../game/state';
+import { LAYERS, ofType } from '../game/types';
+import type { PieceDef, PieceType } from '../game/config';
+import type {
+  Action, CellRef, Controller, DeployAction, GameState, Layer, Owner, Piece, TargetAction,
+  TargetActionType, TerrainDir,
+} from '../game/types';
 import { Renderer } from './renderer';
+import type { DeathEffect, Pt } from './renderer';
+
+type Timer = ReturnType<typeof setTimeout>;
+type Snapshot = Map<string, { r: number; c: number; layer: Layer; x: number; y: number }>;
+interface AnimEntry { pieceId: string; fromX: number; fromY: number; toX: number; toY: number }
+
+/** id で要素を取る。HTML に必ずある要素用（無い時は、これまでと同じく使う所で止まる） */
+function $<T extends HTMLElement = HTMLElement>(id: string): T {
+  return document.getElementById(id) as T;
+}
 
 
 // ── Game state (module-level) ─────────────────────────────────────
-let G;  // game state
-let selectedHandPiece  = null;
-let currentSkillMode   = null;
-let reserveDestination = null;  // {r,c,layer} — step 1 of 2-step reserve selection
-let reserveCells       = [];    // 2-turn preview cells shown in MOVE mode
-const paintMarkers = new Map(); // key="layer,r,c" → 'red'|'yellow'|'blue'
+let G: GameState;  // game state
+let selectedHandPiece: Piece | null = null;
+let currentSkillMode: string | null = null;
+let reserveDestination: CellRef | null = null;  // {r,c,layer} — step 1 of 2-step reserve selection
+let reserveCells: CellRef[] = [];    // 2-turn preview cells shown in MOVE mode
+const paintMarkers = new Map<string, string>(); // key="layer,r,c" → 'red'|'yellow'|'blue'
 const PAINT_COLORS = ['red', 'yellow', 'blue'];
 let currentPaintColor  = 'red'; // 現在の選択色（右クリック/長押しで使用）
 
 // Long-press detection for mobile paint
-let _longPressTimer = null;
-let _longPressStart = null;
+let _longPressTimer: Timer | null = null;
+let _longPressStart: Pt | null = null;
 
 // Pinch zoom + pan
 let _zoomLevel      = 1.0;
 let _panX           = 0;
 let _panY           = 0;
-let _pinchStartDist = null;
+let _pinchStartDist: number | null = null;
 let _pinchStartZoom = 1.0;
 let _pinchMidSX     = 0; // pinch midpoint screen X
 let _pinchMidSY     = 0;
@@ -38,7 +54,7 @@ let _pinchMidCY     = 0;
 let _pinchNatLeft   = 0; // canvas natural screen-left (without transform)
 let _pinchNatTop    = 0;
 // Single-finger pan
-let _panTouchId     = null;
+let _panTouchId: number | null = null;
 let _panStartCX     = 0;
 let _panStartCY     = 0;
 let _panStartPX     = 0;
@@ -47,14 +63,14 @@ let _panMoved       = false;
 const PAN_THRESHOLD = 8;
 
 // ダブルタップ検出（キャンバス）
-let _canvasDtTimer  = null;
+let _canvasDtTimer: Timer | null = null;
 let _canvasDtPX     = 0;
 let _canvasDtPY     = 0;
 
 // メモモード
 let _memoMode       = false;
 
-function getPinchDist(t) {
+function getPinchDist(t: TouchList) {
   const dx = t[0].clientX - t[1].clientX;
   const dy = t[0].clientY - t[1].clientY;
   return Math.sqrt(dx*dx + dy*dy);
@@ -72,19 +88,19 @@ function applyCanvasZoom() {
 }
 
 // Damage flash: pieceId → expiry timestamp (display-only, not in state)
-const damageFlash = new Map();
+const damageFlash = new Map<string, number>();
 // Death effects: [{x, y, startTime, expiry}]
-const deathEffects = [];
+const deathEffects: DeathEffect[] = [];
 
 // ── Animation ─────────────────────────────────────────────────────
 const ANIM_DURATION = 500;  // ms
 // (animation state managed inside startAnimation closure)
 
-function easeInOut(t) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
+function easeInOut(t: number) { return t < 0.5 ? 2*t*t : -1 + (4 - 2*t)*t; }
 
-function snapshotPositions(state) {
-  const snap = new Map();
-  for (const layer of ['surface','depth']) {
+function snapshotPositions(state: GameState): Snapshot {
+  const snap: Snapshot = new Map();
+  for (const layer of LAYERS) {
     for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
       for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
         const p = state[layer][r][c].piece;
@@ -98,9 +114,9 @@ function snapshotPositions(state) {
   return snap;
 }
 
-function buildAnimQueue(snapshot, state) {
-  const queue = [];
-  for (const layer of ['surface','depth']) {
+function buildAnimQueue(snapshot: Snapshot, state: GameState): AnimEntry[] {
+  const queue: AnimEntry[] = [];
+  for (const layer of LAYERS) {
     for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
       for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
         const p = state[layer][r][c].piece;
@@ -118,14 +134,14 @@ function buildAnimQueue(snapshot, state) {
 }
 
 /** 複数駒を同時にアニメーション再生 */
-function animateGroup(group, onDone) {
+function animateGroup(group: AnimEntry[], onDone: () => void) {
   if (group.length === 0) { onDone(); return; }
   const start = performance.now();
 
-  function frame(ts) {
+  function frame(ts: number) {
     const raw = Math.min(1, (ts - start) / ANIM_DURATION);
     const t   = easeInOut(raw);
-    const posOverrides = new Map();
+    const posOverrides = new Map<string, Pt>();
     for (const entry of group) {
       posOverrides.set(entry.pieceId, {
         x: entry.fromX + (entry.toX - entry.fromX) * t,
@@ -144,8 +160,8 @@ function animateGroup(group, onDone) {
 }
 
 /** グループ配列を順番に再生。後発グループの駒はスナップショット位置に固定して表示 */
-function startAnimation(groups, snapshot, onDone) {
-  const normalised = Array.isArray(groups[0]) ? groups : [groups];
+function startAnimation(groups: AnimEntry[] | AnimEntry[][], snapshot: Snapshot, onDone: () => void) {
+  const normalised = (Array.isArray(groups[0]) ? groups : [groups]) as AnimEntry[][];
   let i = 0;
 
   function next() {
@@ -155,17 +171,17 @@ function startAnimation(groups, snapshot, onDone) {
     if (group.length === 0) { next(); return; }
 
     // 後発グループの駒をスナップショット位置に固定
-    const laterIds = new Set();
+    const laterIds = new Set<string>();
     for (let j = gi + 1; j < normalised.length; j++) {
       for (const e of normalised[j]) laterIds.add(e.pieceId);
     }
-    const staticPos = new Map();
+    const staticPos = new Map<string, Pt>();
     for (const [id, pos] of snapshot) {
       if (laterIds.has(id)) staticPos.set(id, { x: pos.x, y: pos.y });
     }
 
     const start = performance.now();
-    function frame(ts) {
+    function frame(ts: number) {
       const raw = Math.min(1, (ts - start) / ANIM_DURATION);
       const t   = easeInOut(raw);
       const overrides = new Map(staticPos);
@@ -185,13 +201,13 @@ function startAnimation(groups, snapshot, onDone) {
   next();
 }
 
-function getSkillName(pieceType) {
-  return { WARDEN:'押し出し', RANGER:'狙撃', STRIKER:'位置交換', ENGINEER:'修繕' }[pieceType] || null;
+function getSkillName(pieceType: PieceType) {
+  return ({ WARDEN:'押し出し', RANGER:'狙撃', STRIKER:'位置交換', ENGINEER:'修繕' } as Partial<Record<PieceType, string>>)[pieceType] || null;
 }
 
-function canUseVine(pieceType)  { return pieceType === 'ENGINEER'; }
-function canUseReact(pieceType, atkRange) { return atkRange > 0; }
-function canUseRoller(pieceType) { return pieceType === 'ROLLER'; }
+function canUseVine(pieceType: PieceType)  { return pieceType === 'ENGINEER'; }
+function canUseReact(pieceType: PieceType, atkRange: number) { return atkRange > 0; }
+function canUseRoller(pieceType: PieceType) { return pieceType === 'ROLLER'; }
 
 function isMobile() { return window.innerWidth <= 700; }
 
@@ -200,8 +216,8 @@ function isMobile() { return window.innerWidth <= 700; }
  * MOVE アクションのみシミュレーション（移動元を空に、移動先を占有）。
  * RESERVE_SET の経由地・目的地はBLOCKERを使わず、呼び出し側でフィルタリングする。
  */
-function withSimulatedP1Actions(state, actions, fn) {
-  const restores = []; // { layer, r, c, orig }
+function withSimulatedP1Actions<T>(state: GameState, actions: Action[], fn: () => T): T {
+  const restores: { layer: Layer; r: number; c: number; orig: Piece | null }[] = [];
 
   // MOVE を仮適用（今ターン移動）
   for (const a of actions) {
@@ -230,7 +246,7 @@ function withSimulatedP1Actions(state, actions, fn) {
  * RESERVE_SET アクションの経由地・目的地をセルリストから除外する。
  * BLOCKERを使わない安全なフィルタリング。
  */
-function filterReservedCells(state, actions, cells) {
+function filterReservedCells(state: GameState, actions: Action[], cells: CellRef[]) {
   for (const a of actions) {
     if (a.type !== 'RESERVE_SET' || a.owner !== 'p1') continue;
     const loc = findPieceById(state, a.pieceId);
@@ -250,9 +266,9 @@ function filterReservedCells(state, actions, cells) {
 // ── Panel switching (tabs removed) ───────────────────────────────
 
 // Sync action button state to both desktop (#btn-X) and mobile (#mob-btn-X)
-function setActBtn(id, opts) {
+function setActBtn(id: string, opts: { disabled?: boolean; active?: boolean; text?: string }) {
   [id, 'mob-' + id].forEach(bid => {
-    const el = document.getElementById(bid);
+    const el = document.getElementById(bid) as HTMLButtonElement | null;
     if (!el) return;
     if (opts.disabled !== undefined) el.disabled = opts.disabled;
     if (opts.active   !== undefined) el.classList.toggle('active', opts.active);
@@ -280,7 +296,7 @@ function initGame() {
     const occDetail = document.getElementById('occ-detail');
     if (occDetail && !isMobile()) occDetail.classList.add('collapsed');
   }
-  Renderer.init(document.getElementById('game-canvas'));
+  Renderer.init($<HTMLCanvasElement>('game-canvas'));
   Renderer.resize();
   bindEvents();
   tick();
@@ -324,7 +340,7 @@ function tick() {
 // ── Event binding ─────────────────────────────────────────────────
 function bindEvents() {
   // Canvas click / touch
-  const canvas = document.getElementById('game-canvas');
+  const canvas = $<HTMLCanvasElement>('game-canvas');
   canvas.addEventListener('click',       onCanvasClick);
   canvas.addEventListener('contextmenu', onCanvasRightClick);
   canvas.addEventListener('touchstart',  onCanvasTouchStart, { passive: false });
@@ -332,23 +348,23 @@ function bindEvents() {
   canvas.addEventListener('touchend',    onCanvasTouchEnd,   { passive: false });
 
   // Layer toggle (buttons)
-  document.getElementById('btn-surface').addEventListener('click', () => setLayer('surface'));
-  document.getElementById('btn-depth').addEventListener('click',   () => setLayer('depth'));
+  $('btn-surface').addEventListener('click', () => setLayer('surface'));
+  $('btn-depth').addEventListener('click',   () => setLayer('depth'));
 
   // PC: mouse scroll on board-wrapper (canvas含む余白全体) → layer switch
-  document.getElementById('board-wrapper').addEventListener('wheel', e => {
+  $('board-wrapper').addEventListener('wheel', e => {
     e.preventDefault();
     if (e.deltaY < 0) setLayer('surface');
     else              setLayer('depth');
   }, { passive: false });
 
   // Mobile: double-tap on board-wrapper (キャンバス外の余白) で層切り替え
-  let _dtTimer = null;
+  let _dtTimer: Timer | null = null;
   const boardWrapper = document.getElementById('board-wrapper');
   if (boardWrapper) {
     boardWrapper.addEventListener('touchend', e => {
       // キャンバス・ボタン類をタップした場合は無視
-      if (e.target === canvas || e.target.closest('button, .act-btn, #action-float')) return;
+      if (e.target === canvas || (e.target as HTMLElement).closest('button, .act-btn, #action-float')) return;
       if (_dtTimer) {
         clearTimeout(_dtTimer);
         _dtTimer = null;
@@ -360,34 +376,34 @@ function bindEvents() {
   }
 
   // View buttons (no-op for hex top-down view)
-  document.querySelectorAll('.view-btn').forEach(btn => {
+  document.querySelectorAll<HTMLElement>('.view-btn').forEach(btn => {
     btn.style.display = 'none';
   });
 
   // Action buttons
-  document.getElementById('btn-terrain') .addEventListener('click', () => setActionMode('TERRAIN'));
-  document.getElementById('btn-skill')   .addEventListener('click', () => setActionMode('SKILL'));
-  document.getElementById('btn-vine')    .addEventListener('click', () => setActionMode('VINE'));
-  document.getElementById('btn-react')   .addEventListener('click', () => setActionMode('REACT'));
-  document.getElementById('btn-pass-action').addEventListener('click', queuePass);
+  $('btn-terrain') .addEventListener('click', () => setActionMode('TERRAIN'));
+  $('btn-skill')   .addEventListener('click', () => setActionMode('SKILL'));
+  $('btn-vine')    .addEventListener('click', () => setActionMode('VINE'));
+  $('btn-react')   .addEventListener('click', () => setActionMode('REACT'));
+  $('btn-pass-action').addEventListener('click', queuePass);
 
   // Roller menu
-  document.querySelectorAll('.roller-opt').forEach(btn => {
+  document.querySelectorAll<HTMLElement>('.roller-opt').forEach(btn => {
     btn.addEventListener('click', () => {
       currentSkillMode = 'ROLLER_' + btn.dataset.rtype;
-      document.getElementById('roller-menu').style.display = 'none';
+      $('roller-menu').style.display = 'none';
       setActionMode('SKILL');
     });
   });
   document.getElementById('btn-roller-cancel')?.addEventListener('click', () => {
-    document.getElementById('roller-menu').style.display = 'none';
+    $('roller-menu').style.display = 'none';
     currentSkillMode = null;
     G.validCells = [];
   });
 
 
   // Layer transit
-  document.getElementById('btn-transit').addEventListener('click', () => {
+  $('btn-transit').addEventListener('click', () => {
     if (!G.selected) return;
     if (G.playerActions.length >= 2) { setMessage('すでに2アクション設定済みです'); return; }
     const { layer, r, c } = G.selected;
@@ -395,8 +411,8 @@ function bindEvents() {
     // Normal transit (same grid coordinate)
     const dest = getTransitDest(G, layer, r, c);
     if (!dest) { setMessage('層移動できません'); return; }
-    const piece = getPieceAt(G, layer, r, c);
-    const action = {
+    const piece = getPieceAt(G, layer, r, c)!;
+    const action: TargetAction = {
       owner: 'p1', type: 'TRANSIT',
       pieceId: piece.id,
       fromLayer: layer, fromR: r, fromC: c,
@@ -404,9 +420,9 @@ function bindEvents() {
     };
     G.playerActions.push(action);
     fillSlot(G.playerActions.length - 1, action, piece);
-    document.getElementById('btn-confirm').disabled = false;
+    $<HTMLButtonElement>('btn-confirm').disabled = false;
     G.selected = null; G.actionMode = null; G.validCells = []; G.attackCells = [];
-    document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll<HTMLElement>('.act-btn').forEach(b => b.classList.remove('active'));
     setActBtn('btn-transit', { disabled: true });
     setActBtn('btn-skill',   { disabled: true });
     clearInfoPanel();
@@ -417,49 +433,49 @@ function bindEvents() {
   });
 
   // Terrain direction (desktop: data-dir, mobile: data-mob-dir)
-  function applyTerrainDir(dir) {
-    G.terrainDir = dir;
-    document.querySelectorAll('.terrain-opt').forEach(b => b.classList.remove('selected'));
-    document.querySelectorAll(`.terrain-opt[data-dir="${dir}"], .terrain-opt[data-mob-dir="${dir}"]`)
+  function applyTerrainDir(dir: string | undefined) {
+    G.terrainDir = dir as TerrainDir;
+    document.querySelectorAll<HTMLElement>('.terrain-opt').forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll<HTMLElement>(`.terrain-opt[data-dir="${dir}"], .terrain-opt[data-mob-dir="${dir}"]`)
       .forEach(b => b.classList.add('selected'));
     setActionMode('TERRAIN');
   }
-  document.querySelectorAll('.terrain-opt[data-dir]').forEach(btn => {
+  document.querySelectorAll<HTMLElement>('.terrain-opt[data-dir]').forEach(btn => {
     btn.addEventListener('click', () => applyTerrainDir(btn.dataset.dir));
   });
 
   // Slot clear buttons
-  document.querySelectorAll('.slot-clear').forEach(btn => {
-    btn.addEventListener('click', () => clearSlot(parseInt(btn.dataset.idx)));
+  document.querySelectorAll<HTMLElement>('.slot-clear').forEach(btn => {
+    btn.addEventListener('click', () => clearSlot(parseInt(btn.dataset.idx!)));
   });
 
   // Confirm
-  document.getElementById('btn-confirm').addEventListener('click', confirmTurn);
+  $('btn-confirm').addEventListener('click', confirmTurn);
 
   // Mobile action buttons
   document.getElementById('mob-btn-vine')   ?.addEventListener('click', () => setActionMode('VINE'));
   document.getElementById('mob-btn-react')  ?.addEventListener('click', () => setActionMode('REACT'));
   document.getElementById('mob-btn-terrain')?.addEventListener('click', () => {
     if (G.terrainDir === null) {
-      document.getElementById('mob-terrain-menu').style.display = 'flex';
+      $('mob-terrain-menu').style.display = 'flex';
     } else {
       setActionMode('TERRAIN');
     }
   });
   document.getElementById('mob-btn-transit')?.addEventListener('click', () =>
-    document.getElementById('btn-transit').click());
+    $('btn-transit').click());
   document.getElementById('mob-btn-skill')  ?.addEventListener('click', () => setActionMode('SKILL'));
   document.getElementById('mob-btn-pass')   ?.addEventListener('click', queuePass);
   // Hide view buttons on mobile too (hex is always top-down)
-  document.querySelectorAll('.view-btn').forEach(b => b.style.display = 'none');
+  document.querySelectorAll<HTMLElement>('.view-btn').forEach(b => b.style.display = 'none');
 
   // Mobile terrain submenu (data-mob-dir)
-  document.querySelectorAll('.terrain-opt[data-mob-dir]').forEach(btn => {
+  document.querySelectorAll<HTMLElement>('.terrain-opt[data-mob-dir]').forEach(btn => {
     btn.addEventListener('click', () => applyTerrainDir(btn.dataset.mobDir));
   });
 
   // Side peek handlers
-  const closeFn = (el, hide) => {
+  const closeFn = (el: HTMLElement | null, hide: () => void) => {
     el?.addEventListener('click',    e => { e.stopPropagation(); hide(); });
     el?.addEventListener('touchend', e => { e.preventDefault(); e.stopPropagation(); hide(); });
   };
@@ -481,54 +497,54 @@ function bindEvents() {
 
   // 旧ポップアップ（ログ）— 後方互換
   closeFn(document.getElementById('btn-close-log'), () => {
-    document.getElementById('log-popup').style.display = 'none';
+    $('log-popup').style.display = 'none';
   });
   document.getElementById('log-popup')?.addEventListener('click', e => {
     if (e.target === document.getElementById('log-popup'))
-      document.getElementById('log-popup').style.display = 'none';
+      $('log-popup').style.display = 'none';
   });
   closeFn(document.getElementById('btn-close-piece-info'), () => {
-    document.getElementById('piece-info-popup').style.display = 'none';
+    $('piece-info-popup').style.display = 'none';
   });
 
   closeFn(document.getElementById('btn-close-hand'), () => {
-    document.getElementById('hand-popup').style.display = 'none';
+    $('hand-popup').style.display = 'none';
   });
   document.getElementById('hand-popup')?.addEventListener('click', e => {
     if (e.target === document.getElementById('hand-popup'))
-      document.getElementById('hand-popup').style.display = 'none';
+      $('hand-popup').style.display = 'none';
   });
 
   // メモモード切り替え
   document.getElementById('btn-memo')?.addEventListener('click', () => {
     _memoMode = !_memoMode;
-    document.getElementById('btn-memo').classList.toggle('active', _memoMode);
+    $('btn-memo').classList.toggle('active', _memoMode);
   });
 
   // 占領状況トグル
   document.getElementById('btn-occ-toggle')?.addEventListener('click', () => {
-    const detail = document.getElementById('occ-detail');
-    const btn    = document.getElementById('btn-occ-toggle');
+    const detail = $('occ-detail');
+    const btn    = $('btn-occ-toggle');
     detail.classList.toggle('collapsed');
     btn.classList.toggle('open', !detail.classList.contains('collapsed'));
   });
 
   // Slot drag & drop (swap action order)
-  let dragSrcIdx = null;
+  let dragSrcIdx: number | null = null;
   [0, 1].forEach(idx => {
-    const slot = document.getElementById(`slot-${idx}`);
+    const slot = $(`slot-${idx}`);
     slot.addEventListener('dragstart', e => {
       dragSrcIdx = idx;
       slot.classList.add('dragging');
-      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer!.effectAllowed = 'move';
     });
     slot.addEventListener('dragend', () => {
       slot.classList.remove('dragging');
-      document.querySelectorAll('.slot').forEach(s => s.classList.remove('drag-over'));
+      document.querySelectorAll<HTMLElement>('.slot').forEach(s => s.classList.remove('drag-over'));
     });
     slot.addEventListener('dragover', e => {
       e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
+      e.dataTransfer!.dropEffect = 'move';
       if (dragSrcIdx !== idx) slot.classList.add('drag-over');
     });
     slot.addEventListener('dragleave', () => slot.classList.remove('drag-over'));
@@ -544,35 +560,35 @@ function bindEvents() {
       saved.filter(Boolean).forEach((a, i) => {
         G.playerActions.push(a);
         if (a.type === 'PASS') {
-          const slotEl = document.getElementById(`slot-${i}`);
-          slotEl.querySelector('.slot-text').textContent = 'パス';
+          const slotEl = $(`slot-${i}`);
+          slotEl.querySelector<HTMLElement>('.slot-text')!.textContent = 'パス';
           slotEl.classList.add('filled');
-          slotEl.querySelector('.slot-clear').style.display = 'inline';
+          slotEl.querySelector<HTMLElement>('.slot-clear')!.style.display = 'inline';
         } else {
           const loc = findPieceById(G, a.pieceId);
           if (loc) fillSlot(i, a, loc.piece);
         }
       });
-      document.getElementById('btn-confirm').disabled = G.playerActions.length === 0;
+      $<HTMLButtonElement>('btn-confirm').disabled = G.playerActions.length === 0;
       dragSrcIdx = null;
     });
   });
 
   // Restart
-  document.getElementById('btn-restart').addEventListener('click', restartGame);
+  $('btn-restart').addEventListener('click', restartGame);
 
   // Resize
   window.addEventListener('resize', () => { Renderer.resize(); });
 }
 
 // ── Layer switching ───────────────────────────────────────────────
-function setLayer(layer) {
+function setLayer(layer: Layer) {
   G.viewLayer = layer;
   G.selected  = null;
   G.validCells = [];
   G.actionMode = null;
-  document.getElementById('btn-surface').classList.toggle('active', layer === 'surface');
-  document.getElementById('btn-depth')  .classList.toggle('active', layer === 'depth');
+  $('btn-surface').classList.toggle('active', layer === 'surface');
+  $('btn-depth')  .classList.toggle('active', layer === 'depth');
   const ind = document.getElementById('layer-indicator');
   if (ind) {
     ind.textContent = layer === 'surface' ? '● 表層' : '● 深層';
@@ -582,7 +598,7 @@ function setLayer(layer) {
 }
 
 // ── Canvas interaction ────────────────────────────────────────────
-function clientToCanvas(el, cx, cy) {
+function clientToCanvas(el: HTMLCanvasElement, cx: number, cy: number) {
   const rect = el.getBoundingClientRect();
   return {
     px: (cx - rect.left) * (el.width / rect.width),
@@ -590,7 +606,7 @@ function clientToCanvas(el, cx, cy) {
   };
 }
 
-function onCanvasTouchStart(e) {
+function onCanvasTouchStart(e: TouchEvent) {
   e.preventDefault();
 
   if (e.touches.length === 2) {
@@ -603,7 +619,7 @@ function onCanvasTouchStart(e) {
     _pinchStartZoom = _zoomLevel;
     _pinchMidSX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
     _pinchMidSY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-    const cv   = e.target;
+    const cv   = e.target as HTMLCanvasElement;
     const rect = cv.getBoundingClientRect();
     _pinchMidCX   = (_pinchMidSX - rect.left) * (cv.width  / rect.width);
     _pinchMidCY   = (_pinchMidSY - rect.top)  * (cv.height / rect.height);
@@ -628,7 +644,7 @@ function onCanvasTouchStart(e) {
   }
 }
 
-function onCanvasTouchMove(e) {
+function onCanvasTouchMove(e: TouchEvent) {
   // ─ ピンチズーム ─
   if (e.touches.length === 2 && _pinchStartDist !== null) {
     e.preventDefault();
@@ -663,7 +679,7 @@ function onCanvasTouchMove(e) {
   }
 }
 
-function onCanvasTouchEnd(e) {
+function onCanvasTouchEnd(e: TouchEvent) {
   e.preventDefault();
   if (e.touches.length < 2) _pinchStartDist = null;
   if (e.touches.length === 0) _panTouchId = null;
@@ -676,7 +692,7 @@ function onCanvasTouchEnd(e) {
   _longPressStart = null;
 
   const touch = e.changedTouches[0];
-  const { px, py } = clientToCanvas(e.target, touch.clientX, touch.clientY);
+  const { px, py } = clientToCanvas(e.target as HTMLCanvasElement, touch.clientX, touch.clientY);
 
   // ─ タップを即時処理（遅延なし） ─
   if (_memoMode) {
@@ -695,21 +711,21 @@ function onCanvasTouchEnd(e) {
   }
 }
 
-function onCanvasClick(e) {
-  const { px, py } = clientToCanvas(e.target, e.clientX, e.clientY);
+function onCanvasClick(e: MouseEvent) {
+  const { px, py } = clientToCanvas(e.target as HTMLCanvasElement, e.clientX, e.clientY);
   handleCanvasInteraction(px, py, false);
 }
 
-function onCanvasRightClick(e) {
+function onCanvasRightClick(e: MouseEvent) {
   e.preventDefault();
-  const { px, py } = clientToCanvas(e.target, e.clientX, e.clientY);
+  const { px, py } = clientToCanvas(e.target as HTMLCanvasElement, e.clientX, e.clientY);
   cyclePaintMarker(px, py);
 }
 
 /** 右クリック/長押し：
  *  マーカーなし → 現在色で配置
  *  マーカーあり → 次の色にサイクル（赤→黄→青→削除） */
-function cyclePaintMarker(px, py) {
+function cyclePaintMarker(px: number, py: number) {
   const cell = Renderer.screenToCell(px, py);
   if (!cell || !isValidCell(cell.r, cell.c)) return;
   const key = `${G.viewLayer},${cell.r},${cell.c}`;
@@ -726,7 +742,7 @@ function cyclePaintMarker(px, py) {
   Renderer.setPaintMarkers(paintMarkers);
 }
 
-function handleCanvasInteraction(px, py, isRightClick) {
+function handleCanvasInteraction(px: number, py: number, isRightClick: boolean) {
   if (G.phase !== 'PLAYER_INPUT') return;
   // Piece body hit test first — catches clicks on tall pieces above their tile
   const cell = Renderer.hitTestPiece(G, G.viewLayer, px, py)
@@ -742,14 +758,14 @@ function handleCanvasInteraction(px, py, isRightClick) {
     // Deploy targets are always surface — check r,c only (layer ignored)
     const isValid = G.validCells.some(v => v.r === r && v.c === c);
     if (isValid) {
-      const action = {
+      const action: DeployAction = {
         owner: 'p1', type: 'DEPLOY',
         pieceId: selectedHandPiece.id,
         toLayer: 'surface', toR: r, toC: c,
       };
       G.playerActions.push(action);
       fillSlot(G.playerActions.length - 1, action, selectedHandPiece);
-      document.getElementById('btn-confirm').disabled = false;
+      $<HTMLButtonElement>('btn-confirm').disabled = false;
       selectedHandPiece = null;
       G.actionMode = null; G.validCells = [];
       const remaining = 2 - G.playerActions.length;
@@ -800,7 +816,7 @@ function handleCanvasInteraction(px, py, isRightClick) {
     }
     // Click on own piece while targeting: switch selection
     if (clickedPiece && clickedPiece.owner === 'p1' && !clickedPiece.reviving) {
-      const alreadyUsed = G.playerActions.some(a => a.pieceId === clickedPiece.id);
+      const alreadyUsed = G.playerActions.some(a => 'pieceId' in a && a.pieceId === clickedPiece.id);
       if (!alreadyUsed) { selectPiece(layer, r, c); return; }
     }
     // Click elsewhere: deselect
@@ -815,7 +831,7 @@ function handleCanvasInteraction(px, py, isRightClick) {
       deselect();
       return;
     }
-    const alreadyUsed = G.playerActions.some(a => a.pieceId === clickedPiece.id);
+    const alreadyUsed = G.playerActions.some(a => 'pieceId' in a && a.pieceId === clickedPiece.id);
     if (alreadyUsed) {
       setMessage('この駒はすでにアクション済みです');
       return;
@@ -830,13 +846,6 @@ function handleCanvasInteraction(px, py, isRightClick) {
 
 // ── Piece info panel data ─────────────────────────────────────────
 const PIECE_INFO = {
-  WARDEN:   {
-    move:    '上下左右 1マス（高さ2: 壁1段越え可）',
-    attack:  '隣接4方向 射程1',
-    terrain: '直線1マス 地形変形',
-    skill:   '🛡 押し出し: 隣接する駒を1マス押す',
-    trait:   '高さ2の重装甲。押し出しで敵を有利なマスへ誘導できる。',
-  },
   SCULPTOR: {
     move:    '全8方向 1マス',
     attack:  '全8方向 射程1',
@@ -888,39 +897,39 @@ const PIECE_INFO = {
   },
 };
 
-function updateInfoPanel(piece, def, layer) {
+function updateInfoPanel(piece: Piece, def: PieceDef, layer: Layer) {
   const info = PIECE_INFO[piece.type];
   if (!info) return;
 
-  document.getElementById('info-empty').style.display   = 'none';
-  document.getElementById('info-content').style.display = 'block';
+  $('info-empty').style.display   = 'none';
+  $('info-content').style.display = 'block';
 
   const emoji = CONFIG.PIECE_EMOJI[piece.type];
   const lbl   = CONFIG.PIECE_LABEL[piece.type];
   const owner = piece.owner === 'p1' ? 'あなた' : 'CPU';
-  document.getElementById('info-name').textContent    = `${emoji} ${lbl}`;
-  document.getElementById('info-owner').textContent   = `${owner} | ${layer === 'surface' ? '表層' : '深層'}`;
-  document.getElementById('info-hp').textContent      = `HP ${piece.hp} / ${piece.maxHp}   高さ ${def.height}`;
+  $('info-name').textContent    = `${emoji} ${lbl}`;
+  $('info-owner').textContent   = `${owner} | ${layer === 'surface' ? '表層' : '深層'}`;
+  $('info-hp').textContent      = `HP ${piece.hp} / ${piece.maxHp}   高さ ${def.height}`;
 
   const trapped    = piece.trapped    ? '⚠ 穴に捕まっています' : '';
   const reviving   = piece.reviving   ? `⚠ 復活まで${piece.reviveTimer}T` : '';
   const slowed     = piece.vineSlowed ? '🌿 蔦減速（次ターン移動-1・スキル不可）' : '';
   const surrounded = piece.surrounded ? '🔴 包囲状態（移動不可）' : '';
-  document.getElementById('info-status').textContent =
+  $('info-status').textContent =
     [trapped, reviving, slowed, surrounded].filter(Boolean).join(' / ') || '';
 
-  document.getElementById('info-move').textContent    = info.move;
-  document.getElementById('info-attack').textContent  = info.attack;
-  document.getElementById('info-terrain').textContent = info.terrain;
-  document.getElementById('info-skill').textContent   = info.skill;
-  document.getElementById('info-trait').textContent   = info.trait;
+  $('info-move').textContent    = info.move;
+  $('info-attack').textContent  = info.attack;
+  $('info-terrain').textContent = info.terrain;
+  $('info-skill').textContent   = info.skill;
+  $('info-trait').textContent   = info.trait;
 }
 
-function updatePieceInfoPopup(piece, def, layer) {
+function updatePieceInfoPopup(piece: Piece, def: PieceDef, layer: Layer) {
   const emoji = CONFIG.PIECE_EMOJI[piece.type];
   const lbl   = CONFIG.PIECE_LABEL[piece.type];
   const owner = piece.owner === 'p1' ? 'あなた' : 'CPU';
-  const el = id => document.getElementById(id);
+  const el = (id: string) => $(id);
   el('pip-name-header').textContent = `${emoji} ${lbl} (${owner})`;
   el('pip-hp').textContent          = `HP ${piece.hp}/${piece.maxHp}  高さ ${def.height}  ${layer === 'surface' ? '表層' : '深層'}`;
   const statuses = [
@@ -938,7 +947,7 @@ function updatePieceInfoPopup(piece, def, layer) {
   el('pip-trait').textContent   = info.trait;
 }
 
-function buildPieceInfo(piece, def) {
+function buildPieceInfo(piece: Piece, def: PieceDef) {
   const moveEl   = document.getElementById('info-move');
   const atkEl    = document.getElementById('info-attack');
   const trnEl    = document.getElementById('info-terrain');
@@ -953,12 +962,12 @@ function buildPieceInfo(piece, def) {
   };
 }
 
-function showHandPopup(owner) {
+function showHandPopup(owner: Owner) {
   const isP1    = owner === 'p1';
   const title   = isP1 ? 'あなたの駒' : '相手の駒';
-  document.getElementById('hand-popup-title').textContent = title;
+  $('hand-popup-title').textContent = title;
 
-  const content = document.getElementById('hand-popup-content');
+  const content = $('hand-popup-content');
   content.innerHTML = '';
 
   const piecesEl = document.getElementById(isP1 ? 'mob-p1-pieces' : 'mob-p2-pieces');
@@ -975,23 +984,23 @@ function showHandPopup(owner) {
     ha.innerHTML = handEl.innerHTML;
     content.appendChild(ha);
   }
-  document.getElementById('hand-popup').style.display = 'flex';
+  $('hand-popup').style.display = 'flex';
 }
 
 function clearInfoPanel() {
-  document.getElementById('info-empty').style.display   = 'block';
-  document.getElementById('info-content').style.display = 'none';
+  $('info-empty').style.display   = 'block';
+  $('info-content').style.display = 'none';
   document.body.classList.remove('piece-selected');
-  document.getElementById('tab-selected-panel').style.display = 'none';
-  document.getElementById('tab-you-panel').style.display      = '';
+  $('tab-selected-panel').style.display = 'none';
+  $('tab-you-panel').style.display      = '';
 }
 
 // ── Piece selection ───────────────────────────────────────────────
-function selectPiece(layer, r, c) {
+function selectPiece(layer: Layer, r: number, c: number) {
   G.selected   = { layer, r, c };
   G.terrainDir = null;
 
-  const piece = getPieceAt(G, layer, r, c);
+  const piece = getPieceAt(G, layer, r, c)!;
   const def   = CONFIG.PIECES[piece.type];
   const lbl   = CONFIG.PIECE_LABEL[piece.type];
 
@@ -1060,11 +1069,11 @@ function selectPiece(layer, r, c) {
   updatePieceInfoPopup(piece, def, layer);
   if (_peekType === 'piece') syncPeekPiece();
   document.body.classList.add('piece-selected');
-  document.getElementById('tab-you-panel').style.display      = 'none';
-  document.getElementById('tab-selected-panel').style.display = '';
+  $('tab-you-panel').style.display      = 'none';
+  $('tab-selected-panel').style.display = '';
 }
 
-function selectHandPiece(piece) {
+function selectHandPiece(piece: Piece) {
   if (G.phase !== 'PLAYER_INPUT') return;
   if (G.playerActions.length >= 2) { setMessage('すでに2アクション設定済みです'); return; }
   selectedHandPiece = piece;
@@ -1103,26 +1112,26 @@ function deselect() {
   setActBtn('btn-skill',   { disabled: true, active: false, text: 'スキル' });
   setActBtn('btn-vine',    { disabled: true, active: false });
   setActBtn('btn-react',   { disabled: true, active: false });
-  document.getElementById('terrain-menu').style.display     = 'none';
-  document.getElementById('mob-terrain-menu').style.display = 'none';
-  document.getElementById('roller-menu').style.display      = 'none';
-  if (isMobile()) document.getElementById('btn-confirm').style.display = '';
+  $('terrain-menu').style.display     = 'none';
+  $('mob-terrain-menu').style.display = 'none';
+  $('roller-menu').style.display      = 'none';
+  if (isMobile()) $('btn-confirm').style.display = '';
   // 地形ボタン選択状態リセット
-  document.querySelectorAll('.terrain-opt').forEach(b => b.classList.remove('selected'));
+  document.querySelectorAll<HTMLElement>('.terrain-opt').forEach(b => b.classList.remove('selected'));
   clearInfoPanel();
   setMessage('駒をクリックして選択してください');
 }
 
 // ── Action mode selection ─────────────────────────────────────────
-function setActionMode(mode) {
+function setActionMode(mode: string) {
   if (!G.selected) return;
   const { layer, r, c } = G.selected;
 
   // Terrain: show direction menu and keep it visible
   if (mode === 'TERRAIN') {
-    document.getElementById('terrain-menu').style.display = 'flex';
-    document.getElementById('mob-terrain-menu').style.display = 'flex';
-    if (isMobile()) document.getElementById('btn-confirm').style.display = 'none';
+    $('terrain-menu').style.display = 'flex';
+    $('mob-terrain-menu').style.display = 'flex';
+    if (isMobile()) $('btn-confirm').style.display = 'none';
     if (G.terrainDir === null) {
       // 方向未選択 → 選択待ちのまま
       G.actionMode = 'TERRAIN';
@@ -1141,15 +1150,15 @@ function setActionMode(mode) {
     if (!piece) return;
     // ROLLER: show type selection menu, then direction targets
     if (piece.type === 'ROLLER') {
-      if (!currentSkillMode?.startsWith('ROLLER')) {
-        document.getElementById('roller-menu').style.display = 'flex';
+      if (!(currentSkillMode as string | null)?.startsWith('ROLLER')) {
+        $('roller-menu').style.display = 'flex';
         return;
       }
       // Direction selection mode
       G.validCells = getValidRollerDirections(G, layer, r, c);
       const tn = currentSkillMode === 'ROLLER_LIGHT' ? '軽' : '重';
       setMessage(`🛞${tn}ローラーの発射方向を選んでください (隣接マス)`);
-      document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll<HTMLElement>('.act-btn').forEach(b => b.classList.remove('active'));
       setActBtn('btn-skill', { active: true });
       return;
     }
@@ -1172,7 +1181,7 @@ function setActionMode(mode) {
         ? `修繕先を選んでください (${G.validCells.length}箇所)`
         : '隣接に回復できる味方がいません');
     }
-    document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll<HTMLElement>('.act-btn').forEach(b => b.classList.remove('active'));
     setActBtn('btn-skill', { active: true });
     return;
   }
@@ -1200,13 +1209,13 @@ function setActionMode(mode) {
     G.validCells = getValidVineTargets(G, layer, r, c);
     const p1v = G.p1Vines.length;
     setMessage(`🌿蔦の設置先を選んでください (${G.validCells.length}箇所) 現在${p1v}/${CONFIG.VINE_MAX}本`);
-    document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll<HTMLElement>('.act-btn').forEach(b => b.classList.remove('active'));
     setActBtn('btn-vine', { active: true });
     return;
   } else if (mode === 'REACT') {
     G.validCells = getValidReactTargets(G, layer, r, c);
     setMessage(`⚡反応監視するマスを選んでください — 敵がそこへ移動したら自動攻撃 (${G.validCells.length}箇所)`);
-    document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll<HTMLElement>('.act-btn').forEach(b => b.classList.remove('active'));
     setActBtn('btn-react', { active: true });
     return;
   } else if (mode === 'RESERVE') {
@@ -1216,25 +1225,25 @@ function setActionMode(mode) {
       withSimulatedP1Actions(G, G.playerActions,
         () => getValidReserveMoves(G, layer, r, c)));
     setMessage(`🔵予約移動先を選んでください（2ターン先まで） (${G.validCells.length}箇所)`);
-    document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll<HTMLElement>('.act-btn').forEach(b => b.classList.remove('active'));
     return;
   } else if (mode === 'RESERVE_VIA') {
     // Step 2: 経由地選択（同様に MOVE+RESERVE_SET 両方でブロック）
     if (!reserveDestination) return;
     G.validCells = filterReservedCells(G, G.playerActions,
       withSimulatedP1Actions(G, G.playerActions,
-        () => getValidReserveVia(G, layer, r, c, reserveDestination.r, reserveDestination.c)));
+        () => getValidReserveVia(G, layer, r, c, reserveDestination!.r, reserveDestination!.c)));
     setMessage(`🔵経由マスを選んでください → (${reserveDestination.r},${reserveDestination.c}) (${G.validCells.length}箇所)`);
     return;
   }
 
   // Highlight action mode buttons
-  document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll<HTMLElement>('.act-btn').forEach(b => b.classList.remove('active'));
   if (mode === 'TERRAIN') setActBtn('btn-terrain', { active: true });
 }
 
 // ── Queue action ──────────────────────────────────────────────────
-function queueAction(tr, tc, tLayer) {
+function queueAction(tr: number, tc: number, tLayer?: Layer) {
   if (!G.selected || !G.actionMode) return;
   if (G.playerActions.length >= 2) { setMessage('すでに2アクション設定済みです'); return; }
 
@@ -1255,9 +1264,9 @@ function queueAction(tr, tc, tLayer) {
   }
   if (G.actionMode === 'RESERVE_VIA') actionType = 'RESERVE_SET';
 
-  const action = {
+  const action: TargetAction = {
     owner: 'p1',
-    type: actionType,
+    type: actionType as TargetActionType,
     pieceId: piece.id,
     fromLayer: layer, fromR: r, fromC: c,
     toLayer: tLayer ?? layer, toR: tr, toC: tc,
@@ -1283,7 +1292,7 @@ function queueAction(tr, tc, tLayer) {
   fillSlot(G.playerActions.length - 1, action, piece);
 
   // Update confirm button
-  document.getElementById('btn-confirm').disabled = false;
+  $<HTMLButtonElement>('btn-confirm').disabled = false;
 
   // Reset selection for next action
   G.selected    = null;
@@ -1291,10 +1300,10 @@ function queueAction(tr, tc, tLayer) {
   G.validCells  = [];
   G.attackCells = [];
   G.terrainDir  = null;
-  document.querySelectorAll('.act-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('terrain-menu').style.display     = 'none';
-  document.getElementById('mob-terrain-menu').style.display = 'none';
-  if (isMobile()) document.getElementById('btn-confirm').style.display = '';
+  document.querySelectorAll<HTMLElement>('.act-btn').forEach(b => b.classList.remove('active'));
+  $('terrain-menu').style.display     = 'none';
+  $('mob-terrain-menu').style.display = 'none';
+  if (isMobile()) $('btn-confirm').style.display = '';
   clearInfoPanel();
 
   const remaining = 2 - G.playerActions.length;
@@ -1308,19 +1317,19 @@ function queuePass() {
   if (G.playerActions.length < 2) {
     G.playerActions.push({ owner:'p1', type:'PASS' });
     const idx = G.playerActions.length - 1;
-    document.getElementById(`slot-${idx}`).querySelector('.slot-text').textContent = 'パス';
-    document.getElementById(`slot-${idx}`).classList.add('filled');
-    document.getElementById(`slot-${idx}`).querySelector('.slot-clear').style.display = 'inline';
+    $(`slot-${idx}`).querySelector<HTMLElement>('.slot-text')!.textContent = 'パス';
+    $(`slot-${idx}`).classList.add('filled');
+    $(`slot-${idx}`).querySelector<HTMLElement>('.slot-clear')!.style.display = 'inline';
   }
-  document.getElementById('btn-confirm').disabled = G.playerActions.length === 0;
+  $<HTMLButtonElement>('btn-confirm').disabled = G.playerActions.length === 0;
   setMessage('パスを設定しました');
 }
 
 // ── Slot management ───────────────────────────────────────────────
-function fillSlot(idx, action, piece) {
-  const slotEl  = document.getElementById(`slot-${idx}`);
-  const textEl  = slotEl.querySelector('.slot-text');
-  const clearEl = slotEl.querySelector('.slot-clear');
+function fillSlot(idx: number, action: Action, piece: Piece) {
+  const slotEl  = $(`slot-${idx}`);
+  const textEl  = slotEl.querySelector<HTMLElement>('.slot-text')!;
+  const clearEl = slotEl.querySelector<HTMLElement>('.slot-clear')!;
 
   const lbl = CONFIG.PIECE_LABEL[piece.type];
   let desc = '';
@@ -1346,7 +1355,7 @@ function fillSlot(idx, action, piece) {
 
 }
 
-function clearSlot(idx) {
+function clearSlot(idx: number) {
   // RESERVE_SET キャンセル時は駒の reservedMove も消す
   const removed = G.playerActions[idx];
   if (removed?.type === 'RESERVE_SET') {
@@ -1358,16 +1367,16 @@ function clearSlot(idx) {
   remaining.forEach((a, i) => {
     G.playerActions.push(a);
     if (a.type === 'PASS') {
-      const slotEl = document.getElementById(`slot-${i}`);
-      slotEl.querySelector('.slot-text').textContent = 'パス';
+      const slotEl = $(`slot-${i}`);
+      slotEl.querySelector<HTMLElement>('.slot-text')!.textContent = 'パス';
       slotEl.classList.add('filled');
-      slotEl.querySelector('.slot-clear').style.display = 'inline';
+      slotEl.querySelector<HTMLElement>('.slot-clear')!.style.display = 'inline';
     } else {
       const loc = findPieceById(G, a.pieceId);
       if (loc) fillSlot(i, a, loc.piece);
     }
   });
-  document.getElementById('btn-confirm').disabled = G.playerActions.length === 0;
+  $<HTMLButtonElement>('btn-confirm').disabled = G.playerActions.length === 0;
   setMessage('アクションを解除しました');
 }
 
@@ -1376,12 +1385,12 @@ function clearSlots() {
   //   confirmTurn 経由の clearSlots では消さない（次ターンに実行させるため）。
   G.playerActions = [];
   for (let i = 0; i < 2; i++) {
-    const slotEl = document.getElementById(`slot-${i}`);
-    slotEl.querySelector('.slot-text').textContent = '未設定';
+    const slotEl = $(`slot-${i}`);
+    slotEl.querySelector<HTMLElement>('.slot-text')!.textContent = '未設定';
     slotEl.classList.remove('filled');
-    slotEl.querySelector('.slot-clear').style.display = 'none';
+    slotEl.querySelector<HTMLElement>('.slot-clear')!.style.display = 'none';
   }
-  document.getElementById('btn-confirm').disabled = true;
+  $<HTMLButtonElement>('btn-confirm').disabled = true;
 }
 
 // ── Confirm turn ──────────────────────────────────────────────────
@@ -1394,9 +1403,9 @@ function confirmTurn() {
   setTimeout(() => {
     // Auto-add reserved moves for P1 pieces（今ターンにRESERVE_SETしたばかりの駒は除外）
     const newReserveIds = new Set(
-      G.playerActions.filter(a => a.type === 'RESERVE_SET').map(a => a.pieceId)
+      ofType(G.playerActions, 'RESERVE_SET').map(a => a.pieceId)
     );
-    for (const layer of ['surface','depth']) {
+    for (const layer of LAYERS) {
       for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
         for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
           const p = G[layer][r][c].piece;
@@ -1415,11 +1424,11 @@ function confirmTurn() {
 
     const cpuActions = CpuAI.getCpuActions(G);
     const p1 = G.playerActions;
-    const p2 = cpuActions.map(a => ({ ...a, owner: 'p2' }));
+    const p2 = cpuActions.map(a => ({ ...a, owner: 'p2' }) as Action);
     const pairCount = Math.max(p1.length, p2.length);
-    const pairs = [];
+    const pairs: Action[][] = [];
     for (let i = 0; i < pairCount; i++) {
-      const pair = [];
+      const pair: Action[] = [];
       if (p1[i]) pair.push(p1[i]);
       if (p2[i]) pair.push(p2[i]);
       pairs.push(pair);
@@ -1429,12 +1438,12 @@ function confirmTurn() {
     // ── フェーズ1: プリアンブル（タイヤ・予約移動）──────────────
     // スナップショットをプリアンブル前に撮り、予約移動アニメーションを生成する
     const snapBeforePreamble = snapshotPositions(G);
-    const preambleLog = [];
+    const preambleLog: string[] = [];
     resolvePreamble(G, allActions, preambleLog);
     const preambleQueue = buildAnimQueue(snapBeforePreamble, G);
 
     // ── フェーズ2: ペア別解決 ─────────────────────────────────
-    const pairData = [];
+    const pairData: { queue: AnimEntry[]; log: string[]; damaged: string[]; deathPositions: Pt[] }[] = [];
 
     // プリアンブルで駒が動いた場合は先頭に追加してアニメーションを見せる
     pairData.push({
@@ -1446,14 +1455,14 @@ function confirmTurn() {
 
     for (const pair of pairs) {
       const snapBefore = snapshotPositions(G);
-      const pairLog = [];
+      const pairLog: string[] = [];
       resolvePairActions(G, pair, pairLog);
 
       // 死亡検出
-      const deathPos = [];
+      const deathPos: Pt[] = [];
       for (const [id, snapPos] of snapBefore) {
         let found = false;
-        outer: for (const l of ['surface','depth']) {
+        outer: for (const l of LAYERS) {
           for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
             for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
               if (G[l][r][c].piece?.id === id) { found = true; break outer; }
@@ -1473,7 +1482,7 @@ function confirmTurn() {
     }
 
     // ── フェーズ3: ターン後処理（占領・勝利判定）────────────────
-    const postLog = [];
+    const postLog: string[] = [];
     resolvePostTurn(G, postLog);
 
     clearSlots();
@@ -1494,7 +1503,7 @@ function confirmTurn() {
       if (G.phase === 'GAME_OVER') { Renderer.draw(G); showGameOver(G.winner); return; }
       G.phase = 'PLAYER_INPUT';
       setMessage(`ターン ${G.turn} — 駒を選択してください`);
-      document.getElementById('turn-display').textContent = `ターン ${G.turn}`;
+      $('turn-display').textContent = `ターン ${G.turn}`;
       tick();
     };
 
@@ -1521,10 +1530,10 @@ function confirmTurn() {
       }
 
       const start = performance.now();
-      (function frame(ts) {
+      (function frame(ts: number) {
         const raw = Math.min(1, (ts - start) / ANIM_DURATION);
         const t   = easeInOut(raw);
-        const overrides = new Map();
+        const overrides = new Map<string, Pt>();
         for (const entry of data.queue) {
           overrides.set(entry.pieceId, {
             x: entry.fromX + (entry.toX - entry.fromX) * t,
@@ -1542,14 +1551,14 @@ function confirmTurn() {
 }
 
 // ── UI helpers ────────────────────────────────────────────────────
-function setMessage(msg) {
+function setMessage(msg: string) {
   G.message = msg;
-  document.getElementById('message-bar').textContent = msg;
+  $('message-bar').textContent = msg;
 }
 
 function updateUI() {
   // Occupation bars
-  function setBar(barId, value, max) {
+  function setBar(barId: string, value: number, max: number) {
     const bar = document.getElementById(barId);
     if (!bar) return;
     bar.style.width = `${Math.min(100, (value / max) * 100)}%`;
@@ -1571,8 +1580,8 @@ function updateUI() {
   if (ep?.active) {
     const sc = G.occMeta?.echoSurface;
     const dc = G.occMeta?.echoDepth;
-    const ctrlLabel = v => v === 'p1' ? 'あなた' : v === 'p2' ? 'CPU' : v === 'contested' ? '⚡拮抗' : '空き';
-    const ctrlColor = v => v === 'p1' ? '#4fc3f7' : v === 'p2' ? '#ef5350' : v === 'contested' ? '#ff9800' : '#888';
+    const ctrlLabel = (v: Controller) => v === 'p1' ? 'あなた' : v === 'p2' ? 'CPU' : v === 'contested' ? '⚡拮抗' : '空き';
+    const ctrlColor = (v: Controller) => v === 'p1' ? '#4fc3f7' : v === 'p2' ? '#ef5350' : v === 'contested' ? '#ff9800' : '#888';
     if (epSEl) { epSEl.textContent = ctrlLabel(sc); epSEl.style.color = ctrlColor(sc); }
     if (epDEl) { epDEl.textContent = ctrlLabel(dc); epDEl.style.color = ctrlColor(dc); }
     if (epHEl) {
@@ -1594,7 +1603,7 @@ function updateUI() {
   // ── 勝利警告 ───────────────────────────────────────────────────
   const warnEl = document.getElementById('victory-warn');
   if (warnEl) {
-    const msgs = [];
+    const msgs: string[] = [];
     if (s1 >= CONFIG.WIN_SCORE - 1) msgs.push('★ あと1点で勝利！');
     if (s2 >= CONFIG.WIN_SCORE - 1) msgs.push('⚠ CPUあと1点！');
     const rem = CONFIG.MAX_TURNS - G.turn;
@@ -1608,7 +1617,7 @@ function updateUI() {
   updatePieceList('p2');
 }
 
-function buildPieceChips(containerEl, owner, includeHandClick) {
+function buildPieceChips(containerEl: HTMLElement, owner: Owner, includeHandClick?: boolean) {
   containerEl.innerHTML = '';
   const pieces = allPieces(G, owner);
   for (const { layer, piece } of pieces) {
@@ -1622,7 +1631,7 @@ function buildPieceChips(containerEl, owner, includeHandClick) {
   }
 }
 
-function buildHandChips(containerEl, owner) {
+function buildHandChips(containerEl: HTMLElement, owner: Owner) {
   containerEl.innerHTML = '';
   const hand = owner === 'p1' ? G.p1Hand : G.p2Hand;
   for (const piece of hand) {
@@ -1638,7 +1647,7 @@ function buildHandChips(containerEl, owner) {
   }
 }
 
-function updatePieceList(owner) {
+function updatePieceList(owner: Owner) {
   // PC side-panel
   const pcPieces = document.getElementById(`${owner}-pieces`);
   if (pcPieces) buildPieceChips(pcPieces, owner);
@@ -1653,7 +1662,7 @@ function updatePieceList(owner) {
 }
 
 // ── Log ──────────────────────────────────────────────────────────
-function addLog(msg, cls = '') {
+function addLog(msg: string, cls = '') {
   const className = `log-entry${cls ? ' log-'+cls : ''}`;
 
   // PC log in left panel
@@ -1663,7 +1672,7 @@ function addLog(msg, cls = '') {
     entry.className = className;
     entry.textContent = msg;
     el.prepend(entry);
-    while (el.children.length > 60) el.removeChild(el.lastChild);
+    while (el.children.length > 60) el.removeChild(el.lastChild!);
   }
 
   // Mobile log popup list (mirror)
@@ -1673,7 +1682,7 @@ function addLog(msg, cls = '') {
     entry.className = className;
     entry.textContent = msg;
     popupEl.prepend(entry);
-    while (popupEl.children.length > 60) popupEl.removeChild(popupEl.lastChild);
+    while (popupEl.children.length > 60) popupEl.removeChild(popupEl.lastChild!);
   }
 
   // Side peek log mirror
@@ -1683,19 +1692,19 @@ function addLog(msg, cls = '') {
     entry.className = className;
     entry.textContent = msg;
     spLog.prepend(entry);
-    while (spLog.children.length > 60) spLog.removeChild(spLog.lastChild);
+    while (spLog.children.length > 60) spLog.removeChild(spLog.lastChild!);
   }
 }
 
 // ── Side Peek ─────────────────────────────────────────────────────
-let _peekType = null;
+let _peekType: string | null = null;
 
-function openSidePeek(type) {
+function openSidePeek(type: string) {
   _peekType = type;
-  const peek  = document.getElementById('side-peek');
-  const title = document.getElementById('side-peek-title');
-  document.getElementById('sp-log').style.display   = type === 'log'   ? 'flex' : 'none';
-  document.getElementById('sp-piece').style.display = type === 'piece' ? 'flex' : 'none';
+  const peek  = $('side-peek');
+  const title = $('side-peek-title');
+  $('sp-log').style.display   = type === 'log'   ? 'flex' : 'none';
+  $('sp-piece').style.display = type === 'piece' ? 'flex' : 'none';
 
   if (type === 'log') {
     title.textContent = 'ログ';
@@ -1710,7 +1719,7 @@ function openSidePeek(type) {
 }
 
 function closeSidePeek() {
-  const peek = document.getElementById('side-peek');
+  const peek = $('side-peek');
   peek.classList.remove('open');
   _peekType = null;
   // トランジション(0.25s)完了後にdisplay:none（transitionend非依存で確実）
@@ -1720,16 +1729,16 @@ function closeSidePeek() {
 }
 
 // ── Left Peek（あなた / 相手）────────────────────────────────────
-let _leftPeekOwner = null;
+let _leftPeekOwner: string | null = null;
 
-function openLeftPeek(owner) {
+function openLeftPeek(owner: string) {
   _leftPeekOwner = owner;
-  const peek = document.getElementById('left-peek');
+  const peek = $('left-peek');
   const showP1 = owner === 'p1' || owner === 'both';
   const showP2 = owner === 'p2' || owner === 'both';
-  document.getElementById('lp-p1-section').style.display = showP1 ? 'flex' : 'none';
-  document.getElementById('lp-p2-section').style.display = showP2 ? 'flex' : 'none';
-  document.getElementById('left-peek-title').textContent =
+  $('lp-p1-section').style.display = showP1 ? 'flex' : 'none';
+  $('lp-p2-section').style.display = showP2 ? 'flex' : 'none';
+  $('left-peek-title').textContent =
     owner === 'p1' ? 'あなた' : owner === 'p2' ? '相手' : '部隊';
   peek.style.display = 'block';
   peek.offsetHeight;
@@ -1737,7 +1746,7 @@ function openLeftPeek(owner) {
 }
 
 function closeLeftPeek() {
-  const peek = document.getElementById('left-peek');
+  const peek = $('left-peek');
   peek.classList.remove('open');
   _leftPeekOwner = null;
   setTimeout(() => {
@@ -1755,9 +1764,9 @@ function syncPeekPiece() {
   const lbl   = CONFIG.PIECE_LABEL[piece.type];
   const owner = piece.owner === 'p1' ? 'あなた' : 'CPU';
 
-  document.getElementById('sp-piece-name').textContent =
+  $('sp-piece-name').textContent =
     `${emoji} ${lbl}`;
-  document.getElementById('sp-hp').textContent =
+  $('sp-hp').textContent =
     `HP ${piece.hp}/${piece.maxHp}  高さ ${def.height}  ${owner}  ${layer === 'surface' ? '表層' : '深層'}`;
 
   const statuses = [
@@ -1766,21 +1775,21 @@ function syncPeekPiece() {
     piece.vineSlowed ? '🌿 蔦減速' : '',
     piece.surrounded ? '🔴 包囲状態' : '',
   ].filter(Boolean).join(' / ');
-  document.getElementById('sp-status').textContent = statuses;
+  $('sp-status').textContent = statuses;
 
   const info = buildPieceInfo(piece, def);
-  document.getElementById('sp-move').textContent    = info.move;
-  document.getElementById('sp-attack').textContent  = info.attack;
-  document.getElementById('sp-terrain').textContent = info.terrain;
-  document.getElementById('sp-skill').textContent   = info.skill;
-  document.getElementById('sp-trait').textContent   = info.trait;
+  $('sp-move').textContent    = info.move;
+  $('sp-attack').textContent  = info.attack;
+  $('sp-terrain').textContent = info.terrain;
+  $('sp-skill').textContent   = info.skill;
+  $('sp-trait').textContent   = info.trait;
 }
 
 // ── Game over ─────────────────────────────────────────────────────
-function showGameOver(winner) {
-  const overlay = document.getElementById('gameover-overlay');
-  const title   = document.getElementById('gameover-title');
-  const msg     = document.getElementById('gameover-msg');
+function showGameOver(winner: GameState['winner']) {
+  const overlay = $('gameover-overlay');
+  const title   = $('gameover-title');
+  const msg     = $('gameover-msg');
 
   if (winner === 'p1') {
     title.textContent = 'VICTORY';
@@ -1799,17 +1808,18 @@ function showGameOver(winner) {
 }
 
 function hideGameOver() {
-  document.getElementById('gameover-overlay').style.display = 'none';
+  $('gameover-overlay').style.display = 'none';
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   initGame();
   addLog('STRATA 開始', 'system');
-  addLog(`目標: A+B同時${CONFIG.WIN_AB}T / A単独${CONFIG.WIN_A}T`, 'system');
+  const legacy = CONFIG as { WIN_AB?: number; WIN_A?: number };
+  addLog(`目標: A+B同時${legacy.WIN_AB}T / A単独${legacy.WIN_A}T`, 'system');
 });
 
 // 開発時だけ、動作確認用に中身を見えるようにする（公開用のビルドには入らない）
 if (import.meta.env.DEV) {
-  window.__strata = { get G() { return G; }, Renderer, allPieces, getValidMoves };
+  (window as unknown as { __strata: unknown }).__strata = { get G() { return G; }, Renderer, allPieces, getValidMoves };
 }

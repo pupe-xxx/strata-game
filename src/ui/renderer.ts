@@ -1,16 +1,24 @@
 // ===== STRATA — Hex Canvas Renderer =====
 import { CONFIG } from '../game/config';
 import { computeVineLines, echoZoneCells, isValidCell } from '../game/logic';
+import type { GameState, Layer, Piece, Terrain } from '../game/types';
+
+export interface Pt { x: number; y: number }
+export type PosOverrides = Map<string, Pt>;
+/** 被ダメージの点滅対象。Set でも Map でもよい */
+export interface FlashSet { has(id: string): boolean; get?(id: string): number | undefined }
+export interface DeathEffect { x: number; y: number; startTime: number; expiry: number }
+type RC = { r: number; c: number };
 
 
 export const Renderer = (() => {
-  let canvas, ctx;
+  let canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D;
   let scale = 1;
-  let HEX, OX, OY;   // scaled hex radius, origin x/y
+  let HEX: number, OX: number, OY: number;   // scaled hex radius, origin x/y
   const BS = CONFIG.BOARD_SIZE;
   const RR = CONFIG.BOARD_RADIUS;  // center index
 
-  const pieceImages = {};
+  const pieceImages: Record<string, HTMLImageElement> = {};
   const PIECE_SPRITE = { WARDEN: 'assets/pieces/warden.jpg' };
 
   function loadPieceImages() {
@@ -22,9 +30,9 @@ export const Renderer = (() => {
     }
   }
 
-  function init(canvasEl) {
+  function init(canvasEl: HTMLCanvasElement) {
     canvas = canvasEl;
-    ctx    = canvas.getContext('2d');
+    ctx    = canvas.getContext('2d')!;
     resize();
     loadPieceImages();
   }
@@ -33,7 +41,7 @@ export const Renderer = (() => {
   function resize() {
     const isMobile = window.innerWidth <= 700;
     const boardWrapper = document.getElementById('board-wrapper');
-    let availW, availH;
+    let availW: number | undefined, availH: number | undefined;
 
     if (boardWrapper) {
       const rect = boardWrapper.getBoundingClientRect();
@@ -73,7 +81,7 @@ export const Renderer = (() => {
   // ── Hex coordinate math ──────────────────────────────────────────
 
   // Axial → screen (flat-top hex)
-  function cellToScreen(row, col) {
+  function cellToScreen(row: number, col: number): Pt {
     const q = col - RR;
     const r = row - RR;
     return {
@@ -83,7 +91,7 @@ export const Renderer = (() => {
   }
 
   // Screen → axial → array indices
-  function screenToCell(px, py) {
+  function screenToCell(px: number, py: number) {
     const relX = (px - OX) / HEX;
     const relY = (py - OY) / HEX;
     const q_f  = relX * 2 / 3;
@@ -104,7 +112,7 @@ export const Renderer = (() => {
 
   // ── Hex drawing primitives ───────────────────────────────────────
 
-  function hexPath(cx, cy, radius) {
+  function hexPath(cx: number, cy: number, radius: number) {
     ctx.beginPath();
     for (let i = 0; i < 6; i++) {
       const angle = (Math.PI / 3) * i;
@@ -116,7 +124,7 @@ export const Renderer = (() => {
     ctx.closePath();
   }
 
-  function drawHex(row, col, fillColor, strokeColor, strokeWidth) {
+  function drawHex(row: number, col: number, fillColor: string | null, strokeColor: string | null, strokeWidth?: number) {
     const { x, y } = cellToScreen(row, col);
     hexPath(x, y, HEX - 1.2 * scale);
     if (fillColor)  { ctx.fillStyle = fillColor;  ctx.fill(); }
@@ -129,7 +137,7 @@ export const Renderer = (() => {
 
   // ── Terrain ──────────────────────────────────────────────────────
 
-  function drawTerrain(row, col, terrain) {
+  function drawTerrain(row: number, col: number, terrain: Terrain) {
     if (terrain.type === 'flat' || terrain.stage === 0) return;
     const { x, y } = cellToScreen(row, col);
     const C = CONFIG.CLR;
@@ -194,10 +202,10 @@ export const Renderer = (() => {
 
   // ── Piece rendering (top-down circles) ───────────────────────────
 
-  function drawPiece(row, col, piece, isSelected, posOverrides, flashSet) {
-    let cx, cy;
+  function drawPiece(row: number, col: number, piece: Piece, isSelected: boolean, posOverrides?: PosOverrides | null, flashSet?: FlashSet | null) {
+    let cx: number, cy: number;
     if (posOverrides && posOverrides.has(piece.id)) {
-      const ov = posOverrides.get(piece.id);
+      const ov = posOverrides.get(piece.id)!;
       cx = ov.x; cy = ov.y;
     } else {
       const pos = cellToScreen(row, col);
@@ -283,7 +291,7 @@ export const Renderer = (() => {
       ctx.font = `bold ${Math.max(6, 7 * scale)}px monospace`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(turnsLeft, bx, by);
+      ctx.fillText(String(turnsLeft), bx, by);
     }
 
     // Emoji / symbol
@@ -353,7 +361,7 @@ export const Renderer = (() => {
 
   // ── Hit test ─────────────────────────────────────────────────────
 
-  function hitTestPiece(state, layer, px, py) {
+  function hitTestPiece(state: GameState, layer: Layer, px: number, py: number) {
     const results = [];
     for (let row = 0; row < BS; row++) {
       for (let col = 0; col < BS; col++) {
@@ -375,22 +383,22 @@ export const Renderer = (() => {
 
   // ── Highlights ───────────────────────────────────────────────────
 
-  function drawHighlights(cells, mode) {
+  function drawHighlights(cells: RC[], mode: string | null) {
     const C = CONFIG.CLR;
-    const colMap = {
+    const colMap: Record<string, keyof typeof C> = {
       MOVE:'VALID_MOVE', ATTACK:'VALID_ATK',
       TERRAIN:'VALID_TRN', TERRAIN_DOWN:'VALID_TRN_DOWN',
       TRANSIT:'VALID_MOVE', SKILL:'VALID_ATK',
       VINE:'VALID_VINE', REACT:'VALID_REACT', RESERVE:'VALID_RESERVE',
     };
-    const fillCol = C[colMap[mode]] ?? C.VALID_MOVE;
+    const fillCol = C[colMap[mode as string]] ?? C.VALID_MOVE;
     for (const { r, c } of cells) {
       drawHex(r, c, fillCol, null);
     }
   }
 
   /** Draw vine lines between P1's vine anchors (only P1 can see these) */
-  function drawVineLines(state, layer) {
+  function drawVineLines(state: GameState, layer: Layer) {
     if (!state.p1Vines || state.p1Vines.length < 2) return;
     const C = CONFIG.CLR;
     const lines = computeVineLines(state, 'p1');
@@ -412,14 +420,14 @@ export const Renderer = (() => {
   }
 
   /** Draw paint markers (player annotations, not game state) */
-  function drawPaintMarkers(markers, layer) {
+  function drawPaintMarkers(markers: Map<string, string> | null, layer: Layer) {
     if (!markers || markers.size === 0) return;
-    const COLORS = {
+    const COLORS: Record<string, string> = {
       red:    'rgba(239,83,80,0.40)',
       yellow: 'rgba(255,220,0,0.40)',
       blue:   'rgba(79,195,247,0.40)',
     };
-    const ICONS = { red: '⚠', yellow: '🔔', blue: 'ℹ' };
+    const ICONS: Record<string, string> = { red: '⚠', yellow: '🔔', blue: 'ℹ' };
     for (const [key, color] of markers) {
       const [lyr, r, c] = key.split(',');
       if (lyr !== layer) continue;
@@ -443,7 +451,7 @@ export const Renderer = (() => {
   }
 
   /** Draw active tires on the board */
-  function drawTires(state, layer) {
+  function drawTires(state: GameState, layer: Layer) {
     if (!state.tires?.length) return;
     for (const tire of state.tires) {
       if (tire.layer !== layer) continue;
@@ -479,7 +487,7 @@ export const Renderer = (() => {
   }
 
   /** Draw movement paths: reserved (2-turn) AND queued normal MOVE actions */
-  function drawReservedPaths(state, layer) {
+  function drawReservedPaths(state: GameState, layer: Layer) {
     // ── 2ターン予約移動経路 ──
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
@@ -488,7 +496,7 @@ export const Renderer = (() => {
         if (!p || p.owner !== 'p1' || !p.reservedMove) continue;
         const { toR, toC, viaR, viaC } = p.reservedMove;
         drawMovePath(cellToScreen(r, c), cellToScreen(toR, toC),
-                     viaR != null ? cellToScreen(viaR, viaC) : null);
+                     viaR != null ? cellToScreen(viaR, viaC!) : null);
       }
     }
 
@@ -503,8 +511,9 @@ export const Renderer = (() => {
     }
   }
 
-  function drawActionPreviews(state, layer) {
+  function drawActionPreviews(state: GameState, layer: Layer) {
     for (const action of (state.playerActions ?? [])) {
+      if (action.type === 'PASS') continue;
       const tL = action.toLayer ?? layer;
       if (tL !== layer) continue;
       const pos = cellToScreen(action.toR, action.toC);
@@ -582,7 +591,7 @@ export const Renderer = (() => {
     }
   }
 
-  function drawMovePath(src, dst, via) {
+  function drawMovePath(src: Pt, dst: Pt, via: Pt | null) {
     ctx.beginPath();
     ctx.moveTo(src.x, src.y);
     if (via) ctx.lineTo(via.x, via.y);
@@ -599,10 +608,10 @@ export const Renderer = (() => {
   }
 
   /** Draw ZOC overlay for enemy pieces threatening p1 */
-  function drawZOCOverlay(state, layer) {
+  function drawZOCOverlay(state: GameState, layer: Layer) {
     const C = CONFIG.CLR;
-    const wardenZOC = new Set();
-    const rangerZOC = new Set();
+    const wardenZOC = new Set<string>();
+    const rangerZOC = new Set<string>();
     for (let r = 0; r < BS; r++) {
       for (let c = 0; c < BS; c++) {
         const p = state[layer][r][c].piece;
@@ -638,13 +647,13 @@ export const Renderer = (() => {
     }
   }
 
-  function drawSelectedCell(row, col) {
+  function drawSelectedCell(row: number, col: number) {
     drawHex(row, col, null, CONFIG.CLR.SELECTED, 2);
   }
 
   // ── Marker ring ──────────────────────────────────────────────────
 
-  function drawMarkerRing(row, col, color, label) {
+  function drawMarkerRing(row: number, col: number, color: string, label: string) {
     const { x, y } = cellToScreen(row, col);
     hexPath(x, y, HEX * 0.72);
     ctx.strokeStyle = color;
@@ -661,7 +670,7 @@ export const Renderer = (() => {
 
   // ── Special markers (Echo Points only) ──────────────────────────
 
-  function drawEchoZone(state, layer, centerR, centerC, ctrlKey, isDepth) {
+  function drawEchoZone(state: GameState, layer: Layer, centerR: number, centerC: number, ctrlKey: 'echoSurface' | 'echoDepth', isDepth: boolean) {
     const ep   = state.echoPoint;
     const ctrl = state.occMeta?.[ctrlKey];
     const C    = CONFIG.CLR;
@@ -669,7 +678,7 @@ export const Renderer = (() => {
 
     // セル塗り
     for (const { r, c } of cells) {
-      let fill, stroke, sw;
+      let fill: string, stroke: string, sw: number;
       if (ctrl === 'contested') {
         fill   = 'rgba(255,152,0,0.22)';
         stroke = C.ECHO_CONT;
@@ -701,28 +710,28 @@ export const Renderer = (() => {
       `${label}${contLabel}${holdStr}${cycStr}`);
   }
 
-  function drawSpecialMarkers(state, layer) {
+  function drawSpecialMarkers(state: GameState, layer: Layer) {
     const ep = state.echoPoint;
     if (!ep?.active) return;
 
     if (layer === 'surface' && ep.surfaceR !== null) {
-      drawEchoZone(state, 'surface', ep.surfaceR, ep.surfaceC, 'echoSurface', false);
+      drawEchoZone(state, 'surface', ep.surfaceR, ep.surfaceC!, 'echoSurface', false);
     }
     if (layer === 'depth' && ep.depthR !== null) {
-      drawEchoZone(state, 'depth', ep.depthR, ep.depthC, 'echoDepth', true);
+      drawEchoZone(state, 'depth', ep.depthR, ep.depthC!, 'echoDepth', true);
     }
   }
 
   // ── Main draw ────────────────────────────────────────────────────
 
-  let _paintMarkers = null;
-  function setPaintMarkers(m) { _paintMarkers = m; }
+  let _paintMarkers: Map<string, string> | null = null;
+  function setPaintMarkers(m: Map<string, string> | null) { _paintMarkers = m; }
 
-  let _reserveCells = [];
-  function setReserveCells(cells) { _reserveCells = cells ?? []; }
+  let _reserveCells: RC[] = [];
+  function setReserveCells(cells: RC[] | null | undefined) { _reserveCells = cells ?? []; }
 
-  let _deathEffects = [];
-  function setDeathEffects(effects) { _deathEffects = effects; }
+  let _deathEffects: DeathEffect[] = [];
+  function setDeathEffects(effects: DeathEffect[]) { _deathEffects = effects; }
 
   function drawDeathEffects() {
     const now = Date.now();
@@ -752,7 +761,7 @@ export const Renderer = (() => {
     }
   }
 
-  function draw(state, posOverrides, flashSet) {
+  function draw(state: GameState, posOverrides?: PosOverrides | null, flashSet?: FlashSet | null) {
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
