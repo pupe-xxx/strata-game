@@ -1,5 +1,15 @@
 // ===== STRATA — Main Entry Point =====
-'use strict';
+import { CONFIG } from '../game/config';
+import { CpuAI } from '../game/cpu';
+import {
+  generateEchoPoints, getTransitDest, getValidAttacks, getValidMoves, getValidPushTargets,
+  getValidReactTargets, getValidRepairTargets, getValidReserveMoves, getValidReserveVia,
+  getValidRollerDirections, getValidSnipeTargets, getValidSwapTargets, getValidTerrainTargets,
+  getValidVineTargets, isValidCell, resolvePairActions, resolvePostTurn, resolvePreamble,
+} from '../game/logic';
+import { allPieces, createInitialState, findPieceById, getPieceAt, tickReviveTimers } from '../game/state';
+import { Renderer } from './renderer';
+
 
 // ── Game state (module-level) ─────────────────────────────────────
 let G;  // game state
@@ -1798,3 +1808,8 @@ window.addEventListener('DOMContentLoaded', () => {
   addLog('STRATA 開始', 'system');
   addLog(`目標: A+B同時${CONFIG.WIN_AB}T / A単独${CONFIG.WIN_A}T`, 'system');
 });
+
+// 開発時だけ、動作確認用に中身を見えるようにする（公開用のビルドには入らない）
+if (import.meta.env.DEV) {
+  window.__strata = { get G() { return G; }, Renderer, allPieces, getValidMoves };
+}

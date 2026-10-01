@@ -1,25 +1,39 @@
 // ===== STRATA — CPU AI =====
-'use strict';
+import { CONFIG } from './config';
+import {
+  HEX6, echoZoneCells, getTransitDest, getValidAttacks, getValidMoves, getValidPushTargets,
+  getValidRepairTargets, getValidSnipeTargets, getValidSwapTargets, getValidTerrainTargets,
+  getValidVineTargets, hexDist, isInEnemyZOC, isValidCell,
+} from './logic';
+import { random } from './random';
+import { allPieces } from './state';
+import type { DeployAction, GameState, Layer, Owner, TargetAction, TerrainDir } from './types';
 
-const CpuAI = (() => {
+type Candidate = { score: number } & (
+  | { type: 'PASS'; pieceId?: undefined }
+  | (Omit<TargetAction, 'owner'> & { owner?: Owner })
+  | (Omit<DeployAction, 'owner'> & { owner?: Owner })
+);
+
+export const CpuAI = (() => {
 
   // ── Scoring helpers ───────────────────────────────────────────
 
-  function distToOcc(state, r, c) {
+  function distToOcc(state: GameState, r: number, c: number) {
     const dists = [];
     const ep = state.echoPoint;
     if (ep?.active) {
       // 表層ゾーン（7マス）への距離
-      for (const cell of echoZoneCells(ep.surfaceR, ep.surfaceC, 'surface'))
+      for (const cell of echoZoneCells(ep.surfaceR!, ep.surfaceC!, 'surface'))
         dists.push(hexDist(r, c, cell.r, cell.c));
       // 深層ゾーン（7マス）への距離
-      for (const cell of echoZoneCells(ep.depthR, ep.depthC, 'depth'))
+      for (const cell of echoZoneCells(ep.depthR!, ep.depthC!, 'depth'))
         dists.push(hexDist(r, c, cell.r, cell.c));
     }
     return dists.length > 0 ? Math.min(...dists) : 999;
   }
 
-  function scoreMove(state, fromLayer, fr, fc, tr, tc) {
+  function scoreMove(state: GameState, fromLayer: Layer, fr: number, fc: number, tr: number, tc: number) {
     let score = 0;
     const piece = state[fromLayer][fr][fc].piece;
     if (!piece) return -999;
@@ -31,9 +45,9 @@ const CpuAI = (() => {
     const ep = state.echoPoint;
     if (ep?.active) {
       const inSurf = fromLayer === 'surface' &&
-        echoZoneCells(ep.surfaceR, ep.surfaceC, 'surface').some(cl => cl.r === tr && cl.c === tc);
+        echoZoneCells(ep.surfaceR!, ep.surfaceC!, 'surface').some(cl => cl.r === tr && cl.c === tc);
       const inDept = fromLayer === 'depth' &&
-        echoZoneCells(ep.depthR, ep.depthC, 'depth').some(cl => cl.r === tr && cl.c === tc);
+        echoZoneCells(ep.depthR!, ep.depthC!, 'depth').some(cl => cl.r === tr && cl.c === tc);
       if (inSurf || inDept) score += 12;
     }
 
@@ -54,7 +68,7 @@ const CpuAI = (() => {
     return score;
   }
 
-  function scoreAttack(state, layer, tr, tc) {
+  function scoreAttack(state: GameState, layer: Layer, tr: number, tc: number) {
     const target = state[layer][tr][tc].piece;
     if (!target) return -999;
 
@@ -64,8 +78,8 @@ const CpuAI = (() => {
     const ep2 = state.echoPoint;
     if (ep2?.active) {
       const inZone =
-        echoZoneCells(ep2.surfaceR, ep2.surfaceC, 'surface').some(cl => cl.r === tr && cl.c === tc) ||
-        echoZoneCells(ep2.depthR,   ep2.depthC,   'depth').some(cl => cl.r === tr && cl.c === tc);
+        echoZoneCells(ep2.surfaceR!, ep2.surfaceC!, 'surface').some(cl => cl.r === tr && cl.c === tc) ||
+        echoZoneCells(ep2.depthR!,   ep2.depthC!,   'depth').some(cl => cl.r === tr && cl.c === tc);
       if (inZone) score += 20;
     }
 
@@ -75,7 +89,7 @@ const CpuAI = (() => {
     return score;
   }
 
-  function scoreTransit(state, fromLayer, r, c) {
+  function scoreTransit(state: GameState, fromLayer: Layer, r: number, c: number) {
     let score = 1;
     if (fromLayer === 'depth') {
       // Emerging to surface: good if close to occupation target
@@ -84,7 +98,7 @@ const CpuAI = (() => {
       // Submerging to depth: Echo depth point proximity bonus
       const ep = state.echoPoint;
       if (ep?.active && ep.depthR !== null) {
-        const eDist = hexDist(r, c, ep.depthR, ep.depthC);
+        const eDist = hexDist(r, c, ep.depthR, ep.depthC!);
         if (eDist <= 3) score += 6;
         if (eDist === 0) score += 12;
       }
@@ -92,7 +106,7 @@ const CpuAI = (() => {
     return score;
   }
 
-  function scoreTerrain(state, layer, tr, tc, dir) {
+  function scoreTerrain(state: GameState, layer: Layer, tr: number, tc: number, dir: TerrainDir | null | undefined) {
     let score = 2;
 
     for (const [dr, dc] of HEX6) {
@@ -111,7 +125,7 @@ const CpuAI = (() => {
     return score;
   }
 
-  function scoreRollerDir(state, layer, r, c, dr, dc, subtype) {
+  function scoreRollerDir(state: GameState, layer: Layer, r: number, c: number, dr: number, dc: number, subtype: 'light' | 'heavy') {
     let score = 1;
     let nr = r, nc = c;
     for (let step = 0; step < 12; step++) {
@@ -128,7 +142,7 @@ const CpuAI = (() => {
     return score;
   }
 
-  function scoreVine(state, layer, tr, tc) {
+  function scoreVine(state: GameState, layer: Layer, tr: number, tc: number) {
     let score = 3;
     // High value: vine on a cell enemy is likely to pass through (near occ zone)
     const distA = distToOcc(state, tr, tc);
@@ -146,8 +160,8 @@ const CpuAI = (() => {
 
   // ── Generate all candidate actions for CPU ────────────────────
 
-  function getCandidates(state) {
-    const candidates = [{ type:'PASS', score:0 }];
+  function getCandidates(state: GameState) {
+    const candidates: Candidate[] = [{ type:'PASS', score:0 }];
     const owner = 'p2';
 
     for (const { layer, r, c, piece } of allPieces(state, owner)) {
@@ -239,7 +253,7 @@ const CpuAI = (() => {
         for (const [dr, dc] of HEX6) {
           const nr = r + dr, nc = c + dc;
           if (!isValidCell(nr, nc)) continue;
-          for (const subtype of ['light', 'heavy']) {
+          for (const subtype of ['light', 'heavy'] as const) {
             const s = scoreRollerDir(state, layer, r, c, dr, dc, subtype);
             if (s > 0) candidates.push({
               type: subtype === 'light' ? 'SKILL_ROLLER_LIGHT' : 'SKILL_ROLLER_HEAVY',
@@ -255,7 +269,7 @@ const CpuAI = (() => {
       // Terrain actions
       const terrainTargets = getValidTerrainTargets(state, layer, r, c);
       for (const { r:tr, c:tc } of terrainTargets) {
-        for (const dir of ['up','down']) {
+        for (const dir of ['up','down'] as const) {
           candidates.push({
             type:'TERRAIN', pieceId:piece.id,
             fromLayer:layer, fromR:r, fromC:c,
@@ -270,7 +284,7 @@ const CpuAI = (() => {
     // Deploy from hand
     for (const piece of state.p2Hand) {
       // Deploy to back rows (rows 0-2 for 13×13)
-      const deployRow = Math.floor(Math.random() * 3);
+      const deployRow = Math.floor(random() * 3);
       for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
         if (!state.surface[deployRow]?.[c]?.piece) {
           candidates.push({
@@ -288,16 +302,16 @@ const CpuAI = (() => {
 
   // ── Pick two best actions ─────────────────────────────────────
 
-  function getCpuActions(state) {
+  function getCpuActions(state: GameState) {
     const candidates = getCandidates(state);
     candidates.sort((a, b) => b.score - a.score);
 
     // Pick top action with some randomness (80% best, 20% top-5)
-    function pickOne(pool) {
-      if (pool.length === 0) return { type:'PASS', score:0 };
-      if (Math.random() < 0.8) return pool[0];
+    function pickOne(pool: Candidate[]) {
+      if (pool.length === 0) return { type:'PASS', score:0 } as Candidate;
+      if (random() < 0.8) return pool[0];
       const top = pool.slice(0, Math.min(5, pool.length));
-      return top[Math.floor(Math.random() * top.length)];
+      return top[Math.floor(random() * top.length)];
     }
 
     const action1 = pickOne(candidates);

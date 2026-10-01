@@ -1,7 +1,17 @@
 // ===== STRATA — Game Configuration (Hex Grid) =====
-'use strict';
 
-const CONFIG = Object.freeze({
+export type PieceType = 'WARDEN' | 'SCULPTOR' | 'STRIKER' | 'RANGER' | 'PHANTOM' | 'ENGINEER' | 'ROLLER';
+
+export interface PieceDef {
+  maxHp: number;
+  height: number;
+  moveDir: 'hex' | 'ortho';
+  moveDist: number;
+  atkRange: number;
+  terrainRange: number;
+}
+
+export const CONFIG = Object.freeze({
   // ─── Hex grid ───────────────────────────────────────────────────
   BOARD_RADIUS: 7,       // hex grid radius; valid cells: max(|q|,|r|,|s|) <= R
   BOARD_SIZE:   15,      // 2*BOARD_RADIUS + 1 (array storage)
@@ -27,19 +37,19 @@ const CONFIG = Object.freeze({
     PHANTOM:  { maxHp:1, height:3, moveDir:'hex', moveDist:3, atkRange:1, terrainRange:0 },
     ENGINEER: { maxHp:2, height:1, moveDir:'hex', moveDist:2, atkRange:1, terrainRange:0 },
     ROLLER:   { maxHp:2, height:1, moveDir:'hex', moveDist:2, atkRange:1, terrainRange:0 },
-  },
+  } as Record<PieceType, PieceDef>,
 
   PIECE_LABEL: {
     WARDEN:'ウォーデン', SCULPTOR:'スカルプター',
     STRIKER:'ストライカー', RANGER:'レンジャー', PHANTOM:'ファントム',
     ENGINEER:'エンジニア', ROLLER:'転師',
-  },
-  PIECE_EMOJI:  { WARDEN:'🛡', SCULPTOR:'⛏', STRIKER:'⚡', RANGER:'🏹', PHANTOM:'👻', ENGINEER:'🔧', ROLLER:'🛞' },
-  PIECE_SYMBOL: { WARDEN:'◆', SCULPTOR:'◈', STRIKER:'▲', RANGER:'⊕', PHANTOM:'◎', ENGINEER:'⚙', ROLLER:'⊗' },
+  } as Record<PieceType, string>,
+  PIECE_EMOJI:  { WARDEN:'🛡', SCULPTOR:'⛏', STRIKER:'⚡', RANGER:'🏹', PHANTOM:'👻', ENGINEER:'🔧', ROLLER:'🛞' } as Record<PieceType, string>,
+  PIECE_SYMBOL: { WARDEN:'◆', SCULPTOR:'◈', STRIKER:'▲', RANGER:'⊕', PHANTOM:'◎', ENGINEER:'⚙', ROLLER:'⊗' } as Record<PieceType, string>,
   PIECE_COLOR:  {
     WARDEN:'#b0bec5', SCULPTOR:'#bcaaa4', STRIKER:'#ff8a65',
     RANGER:'#81c784', PHANTOM:'#ce93d8', ENGINEER:'#ffb74d', ROLLER:'#ff7043',
-  },
+  } as Record<PieceType, string>,
 
   // ─── Colours ─────────────────────────────────────────────────────
   CLR: {
@@ -97,8 +107,8 @@ const CONFIG = Object.freeze({
     { r:12, c:7,  type:'SCULPTOR' },  // q=0,  r=5
     { r:12, c:8,  type:'WARDEN'   },  // q=1,  r=5
     { r:13, c:7,  type:'PHANTOM'  },  // q=0,  r=6
-  ],
+  ] as { r: number; c: number; type: PieceType }[],
 
-  HAND_PIECES: ['STRIKER', 'STRIKER'],
+  HAND_PIECES: ['STRIKER', 'STRIKER'] as PieceType[],
   REVIVE_WAIT: 1,
 });

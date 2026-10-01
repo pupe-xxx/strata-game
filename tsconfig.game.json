@@ -1,0 +1,10 @@
+{
+  // ルール側（src/game）を「画面の型なし」で検査する。
+  // document や Canvas に触れるコードを src/game に書くと、ここでエラーになる。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": ["src/game", "src/kit/rng.ts"]
+}

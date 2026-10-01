@@ -1,20 +1,21 @@
 // ===== STRATA — Game State =====
-'use strict';
+import { CONFIG, type PieceType } from './config';
+import { LAYERS, type Cell, type GameState, type Grid, type Layer, type Owner, type Piece } from './types';
 
 let _uid = 0;
-function uid(owner, type) { return `${owner}_${type}_${++_uid}`; }
+export function uid(owner: Owner, type: PieceType) { return `${owner}_${type}_${++_uid}`; }
 
-function makeCell() {
+export function makeCell(): Cell {
   return { terrain: { type:'flat', stage:0 }, piece:null };
 }
 
-function makeGrid() {
+export function makeGrid(): Grid {
   return Array.from({ length: CONFIG.BOARD_SIZE }, () =>
     Array.from({ length: CONFIG.BOARD_SIZE }, makeCell)
   );
 }
 
-function makePiece(type, owner) {
+export function makePiece(type: PieceType, owner: Owner): Piece {
   const def = CONFIG.PIECES[type];
   return {
     id: uid(owner, type),
@@ -34,7 +35,7 @@ function makePiece(type, owner) {
 }
 
 // ── createInitialState ────────────────────────────────────────────
-function createInitialState() {
+export function createInitialState(): GameState {
   _uid = 0;
   const surface = makeGrid();
   const depth   = makeGrid();
@@ -107,16 +108,16 @@ function createInitialState() {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-function getCell(state, layer, r, c) {
+export function getCell(state: GameState, layer: Layer, r: number, c: number) {
   return state[layer]?.[r]?.[c] ?? null;
 }
 
-function getPieceAt(state, layer, r, c) {
+export function getPieceAt(state: GameState, layer: Layer, r: number, c: number) {
   return state[layer]?.[r]?.[c]?.piece ?? null;
 }
 
-function findPieceById(state, id) {
-  for (const layer of ['surface','depth']) {
+export function findPieceById(state: GameState, id: string) {
+  for (const layer of LAYERS) {
     for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
       for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
         const p = state[layer][r][c].piece;
@@ -127,9 +128,9 @@ function findPieceById(state, id) {
   return null;
 }
 
-function allPieces(state, owner) {
+export function allPieces(state: GameState, owner: Owner) {
   const result = [];
-  for (const layer of ['surface','depth']) {
+  for (const layer of LAYERS) {
     for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
       for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
         const p = state[layer][r][c].piece;
@@ -140,13 +141,13 @@ function allPieces(state, owner) {
   return result;
 }
 
-function movePieceOnGrid(state, fromLayer, fr, fc, toLayer, tr, tc) {
+export function movePieceOnGrid(state: GameState, fromLayer: Layer, fr: number, fc: number, toLayer: Layer, tr: number, tc: number) {
   const piece = state[fromLayer][fr][fc].piece;
   state[fromLayer][fr][fc].piece = null;
   state[toLayer][tr][tc].piece = piece;
 }
 
-function transferToRevival(state, layer, r, c) {
+export function transferToRevival(state: GameState, layer: Layer, r: number, c: number) {
   const piece = state[layer][r][c].piece;
   if (!piece) return;
   state[layer][r][c].piece = null;
@@ -171,8 +172,8 @@ function transferToRevival(state, layer, r, c) {
   }
 }
 
-function tickReviveTimers(state) {
-  for (const layer of ['surface','depth']) {
+export function tickReviveTimers(state: GameState) {
+  for (const layer of LAYERS) {
     for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
       for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
         const p = state[layer][r][c].piece;

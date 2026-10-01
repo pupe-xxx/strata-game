@@ -1,7 +1,9 @@
 // ===== STRATA — Hex Canvas Renderer =====
-'use strict';
+import { CONFIG } from '../game/config';
+import { computeVineLines, echoZoneCells, isValidCell } from '../game/logic';
 
-const Renderer = (() => {
+
+export const Renderer = (() => {
   let canvas, ctx;
   let scale = 1;
   let HEX, OX, OY;   // scaled hex radius, origin x/y
