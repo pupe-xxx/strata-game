@@ -258,7 +258,8 @@ const Renderer = (() => {
     // Charging indicator: direction arrow + countdown badge
     if (piece.chargingSkill) {
       const { dir, turnsLeft } = piece.chargingSkill;
-      // Compute direction using neighbor cellconst nRow = row + dir[0], nCol = col + dir[1];
+      // Compute direction using neighbor cell
+      const nRow = row + dir[0], nCol = col + dir[1];
       if (isValidCell(nRow, nCol)) {
         const { x: nx, y: ny } = cellToScreen(nRow, nCol);
         ctx.beginPath();
