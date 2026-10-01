@@ -8,6 +8,7 @@ import {
   getValidVineTargets, isValidCell, resolvePairActions, resolvePostTurn, resolvePreamble,
 } from '../game/logic';
 import { allPieces, createInitialState, findPieceById, getPieceAt, tickReviveTimers } from '../game/state';
+import { collectReservedMoves, pairUp } from '../game/turn';
 import { LAYERS, ofType } from '../game/types';
 import type { PieceDef, PieceType } from '../game/config';
 import type {
@@ -1402,37 +1403,12 @@ function confirmTurn() {
 
   setTimeout(() => {
     // Auto-add reserved moves for P1 pieces（今ターンにRESERVE_SETしたばかりの駒は除外）
-    const newReserveIds = new Set(
-      ofType(G.playerActions, 'RESERVE_SET').map(a => a.pieceId)
-    );
-    for (const layer of LAYERS) {
-      for (let r = 0; r < CONFIG.BOARD_SIZE; r++) {
-        for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
-          const p = G[layer][r][c].piece;
-          if (p && p.owner === 'p1' && p.reservedMove && !newReserveIds.has(p.id)) {
-            const rv = p.reservedMove;
-            G.playerActions.push({
-              owner: 'p1', type: 'RESERVED_MOVE', pieceId: p.id,
-              fromLayer: layer, fromR: r, fromC: c,
-              toLayer: rv.toLayer, toR: rv.toR, toC: rv.toC,
-              viaLayer: rv.viaLayer, viaR: rv.viaR, viaC: rv.viaC,
-            });
-          }
-        }
-      }
-    }
+    G.playerActions.push(...collectReservedMoves(G, 'p1', G.playerActions));
 
     const cpuActions = CpuAI.getCpuActions(G);
     const p1 = G.playerActions;
     const p2 = cpuActions.map(a => ({ ...a, owner: 'p2' }) as Action);
-    const pairCount = Math.max(p1.length, p2.length);
-    const pairs: Action[][] = [];
-    for (let i = 0; i < pairCount; i++) {
-      const pair: Action[] = [];
-      if (p1[i]) pair.push(p1[i]);
-      if (p2[i]) pair.push(p2[i]);
-      pairs.push(pair);
-    }
+    const pairs = pairUp(p1, p2);
     const allActions = pairs.flat();
 
     // ── フェーズ1: プリアンブル（タイヤ・予約移動）──────────────

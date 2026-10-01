@@ -87,6 +87,13 @@ function pickP1Actions(api, G, rnd) {
 
 // main.js の confirmTurn と同じ順序で1ターン進める
 export function playTurn(api, G, p1Actions) {
+  // TypeScript 版は、ルール側の playTurn（src/game/turn.ts）をそのまま使う。
+  // その下は、記録を取った時（素の JavaScript 版）の進め方。順序の基準として残してある
+  if (api.playTurn) {
+    const cpu = api.getCpuActions(G).map(a => ({ ...a, owner: 'p2' }));
+    const r = api.playTurn(G, p1Actions, cpu);
+    return { log: r.log, all: r.actions, damaged: r.damaged };
+  }
   const p1 = [...p1Actions];
   const BS = api.CONFIG.BOARD_SIZE;
   // このターンに予約したばかりの駒は、次のターンから動く

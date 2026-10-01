@@ -16,6 +16,9 @@ type Candidate = { score: number } & (
 );
 
 export const CpuAI = (() => {
+  // 今指している側と、その相手。getCpuActions の最初に決める
+  let me: Owner = 'p2';
+  let foe: Owner = 'p1';
 
   // ── Scoring helpers ───────────────────────────────────────────
 
@@ -55,15 +58,15 @@ export const CpuAI = (() => {
       const nr = tr + dr, nc = tc + dc;
       if (!isValidCell(nr, nc)) continue;
       const p = state[fromLayer][nr][nc].piece;
-      if (p && p.owner === 'p1') score -= 4;
+      if (p && p.owner === foe) score -= 4;
     }
 
     const destCell = state[fromLayer][tr][tc];
     if (destCell.terrain.type === 'hole') score -= 10;
     // Avoid moving into enemy vine
-    if (destCell.terrain.type === 'vine' && destCell.terrain.placedBy === 'p1') score -= 8;
+    if (destCell.terrain.type === 'vine' && destCell.terrain.placedBy === foe) score -= 8;
     // Avoid ZOC cells if piece is valuable (HP > 1)
-    if (piece.hp > 1 && isInEnemyZOC(state, fromLayer, tr, tc, 'p2')) score -= 5;
+    if (piece.hp > 1 && isInEnemyZOC(state, fromLayer, tr, tc, me)) score -= 5;
 
     return score;
   }
@@ -114,13 +117,13 @@ export const CpuAI = (() => {
       if (!isValidCell(nr, nc)) continue;
       const p = state[layer][nr][nc].piece;
       if (p) {
-        if (p.owner === 'p1' && dir === 'up') score += 6;
-        if (p.owner === 'p2' && dir === 'down') score -= 4;
+        if (p.owner === foe && dir === 'up') score += 6;
+        if (p.owner === me && dir === 'down') score -= 4;
       }
     }
 
     const target = state[layer][tr][tc].piece;
-    if (target && target.owner === 'p1' && dir === 'down') score += 15;
+    if (target && target.owner === foe && dir === 'down') score += 15;
 
     return score;
   }
@@ -134,8 +137,8 @@ export const CpuAI = (() => {
       const cell = state[layer][nr][nc];
       if (cell.terrain.type === 'wall' && cell.terrain.stage >= 1) break;
       if (cell.piece) {
-        if (cell.piece.owner === 'p1') score += 10;  // hits enemy
-        if (cell.piece.owner === 'p2') score -= 6;   // hits ally
+        if (cell.piece.owner === foe) score += 10;  // hits enemy
+        if (cell.piece.owner === me) score -= 6;   // hits ally
         if (subtype === 'light') break;  // light stops on first piece
       }
     }
@@ -153,7 +156,7 @@ export const CpuAI = (() => {
       const nr = tr + dr, nc = tc + dc;
       if (!isValidCell(nr, nc)) continue;
       const p = state[layer][nr][nc].piece;
-      if (p && p.owner === 'p2') score -= 3;
+      if (p && p.owner === me) score -= 3;
     }
     return score;
   }
@@ -162,7 +165,7 @@ export const CpuAI = (() => {
 
   function getCandidates(state: GameState) {
     const candidates: Candidate[] = [{ type:'PASS', score:0 }];
-    const owner = 'p2';
+    const owner = me;
 
     for (const { layer, r, c, piece } of allPieces(state, owner)) {
       if (piece.reviving) continue;
@@ -207,7 +210,7 @@ export const CpuAI = (() => {
             type:'SKILL_PUSH', pieceId:piece.id,
             fromLayer:layer, fromR:r, fromC:c,
             toLayer:layer, toR:t.r, toC:t.c,
-            score: (state[layer][t.r][t.c].piece?.owner === 'p1') ? 8 : -2,
+            score: (state[layer][t.r][t.c].piece?.owner === foe) ? 8 : -2,
           });
         }
       } else if (piece.type === 'RANGER') {
@@ -222,7 +225,7 @@ export const CpuAI = (() => {
       } else if (piece.type === 'STRIKER') {
         for (const t of getValidSwapTargets(state, layer, r, c)) {
           const tp = state[layer][t.r][t.c].piece;
-          const swapScore = tp?.owner === 'p1'
+          const swapScore = tp?.owner === foe
             ? Math.max(0, 6 - distToOcc(state, t.r, t.c))   // pull enemy away from occ
             : distToOcc(state, t.r, t.c) < distToOcc(state, r, c) ? 7 : 2;
           candidates.push({
@@ -243,7 +246,7 @@ export const CpuAI = (() => {
         }
         for (const t of getValidVineTargets(state, layer, r, c)) {
           candidates.push({
-            type:'SKILL_VINE', pieceId:piece.id, owner:'p2',
+            type:'SKILL_VINE', pieceId:piece.id, owner:me,
             fromLayer:layer, fromR:r, fromC:c,
             toLayer:layer, toR:t.r, toC:t.c,
             score: scoreVine(state, layer, t.r, t.c),
@@ -257,7 +260,7 @@ export const CpuAI = (() => {
             const s = scoreRollerDir(state, layer, r, c, dr, dc, subtype);
             if (s > 0) candidates.push({
               type: subtype === 'light' ? 'SKILL_ROLLER_LIGHT' : 'SKILL_ROLLER_HEAVY',
-              pieceId: piece.id, owner: 'p2',
+              pieceId: piece.id, owner: me,
               fromLayer: layer, fromR: r, fromC: c,
               toLayer: layer, toR: nr, toC: nc,
               score: s + (subtype === 'heavy' ? -2 : 0),
@@ -282,14 +285,17 @@ export const CpuAI = (() => {
     }
 
     // Deploy from hand
-    for (const piece of state.p2Hand) {
-      // Deploy to back rows (rows 0-2 for 13×13)
-      const deployRow = Math.floor(random() * 3);
-      for (let c = 0; c < CONFIG.BOARD_SIZE; c++) {
+    // 後手は上の3行（0〜2）、先手はそれを180°回した下の3行に置く
+    const last = CONFIG.BOARD_SIZE - 1;
+    for (const piece of (me === 'p1' ? state.p1Hand : state.p2Hand)) {
+      const pick = Math.floor(random() * 3);
+      const deployRow = me === 'p1' ? last - pick : pick;
+      for (let i = 0; i < CONFIG.BOARD_SIZE; i++) {
+        const c = me === 'p1' ? last - i : i;
         if (!state.surface[deployRow]?.[c]?.piece) {
           candidates.push({
             type:'DEPLOY', pieceId:piece.id, pieceType:piece.type,
-            owner:'p2',
+            owner:me,
             toLayer:'surface', toR:deployRow, toC:c,
             score: 3,
           });
@@ -302,7 +308,10 @@ export const CpuAI = (() => {
 
   // ── Pick two best actions ─────────────────────────────────────
 
-  function getCpuActions(state: GameState) {
+  /** owner の側の行動を最大2つ返す。owner を省くと後手（p2） */
+  function getCpuActions(state: GameState, owner: Owner = 'p2') {
+    me  = owner;
+    foe = owner === 'p1' ? 'p2' : 'p1';
     const candidates = getCandidates(state);
     candidates.sort((a, b) => b.score - a.score);
 

@@ -8,6 +8,7 @@ import { CpuAI } from '../src/game/cpu';
 import * as logic from '../src/game/logic';
 import { setRandom } from '../src/game/random';
 import * as state from '../src/game/state';
+import { playTurn } from '../src/game/turn';
 import { runGame } from './golden/sim-core.mjs';
 
 interface GoldenGame {
@@ -19,7 +20,7 @@ interface GoldenGame {
 }
 
 const golden = JSON.parse(readFileSync(new URL('./golden/golden.json', import.meta.url), 'utf8')) as { games: GoldenGame[] };
-const api = { ...logic, ...state, CONFIG, getCpuActions: CpuAI.getCpuActions, setRandom };
+const api = { ...logic, ...state, CONFIG, getCpuActions: (s: Parameters<typeof CpuAI.getCpuActions>[0]) => CpuAI.getCpuActions(s), playTurn, setRandom };
 
 describe('移行前の動作記録との照合', () => {
   it(`${golden.games.length} 試合すべてで、毎ターンの盤面が記録と一致する`, () => {
